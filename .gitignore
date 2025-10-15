@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables
+.env
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Test images (exclude actual images, keep directory structure)
+test-images/*.jpg
+test-images/*.jpeg
+test-images/*.png
+test-images/*.gif
+!test-images/.gitkeep
+!test-images/README.md

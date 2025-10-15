@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  receipt-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: receipt-tracker-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    volumes:
+      # Mount logs directory for persistence
+      - ./logs:/app/logs
+    networks:
+      - receipt-tracker-network
+    # Uncomment if you need to expose a port for health checks or webhooks
+    # ports:
+    #   - "3000:3000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  receipt-tracker-network:
+    driver: bridge
