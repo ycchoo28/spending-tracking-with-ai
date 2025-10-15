@@ -17,16 +17,34 @@ An intelligent receipt and e-wallet transaction tracking agent that processes im
 ```
 receipt-tracker-agent/
 ├── src/
-│   ├── config/         # Configuration management
-│   ├── telegram/       # Telegram bot handlers
-│   ├── workflow/       # LangGraph state machine
-│   ├── vision/         # Vision API processing
-│   ├── categorizer/    # Transaction categorization
-│   └── database/       # Supabase client
-├── .env.example        # Environment variables template
-├── package.json        # Dependencies
-└── tsconfig.json       # TypeScript configuration
+│   ├── features/                    # Feature modules
+│   │   ├── receipt-processing/      # Receipt processing feature
+│   │   │   ├── categorizer/         # Transaction categorization
+│   │   │   ├── vision/              # Image processing & OCR
+│   │   │   └── workflow/            # LangGraph orchestration
+│   │   └── telegram-bot/            # Telegram bot integration
+│   ├── prompts/                     # Centralized LLM prompts
+│   │   ├── receipt/                 # Receipt-specific prompts
+│   │   └── shared/                  # Shared prompt utilities
+│   ├── core/                        # Core infrastructure
+│   │   ├── config/                  # Configuration management
+│   │   ├── database/                # Database client
+│   │   └── utils/                   # Shared utilities
+│   └── index.ts                     # Main entry point
+├── tests/                           # Test files
+│   ├── unit/                        # Unit tests
+│   ├── integration/                 # Integration tests
+│   └── e2e/                         # End-to-end tests
+├── docs/                            # Documentation
+│   ├── guides/                      # User guides
+│   ├── architecture/                # Architecture docs
+│   └── quick-start.md              # Quick start guide
+├── .env.example                     # Environment variables template
+├── package.json                     # Dependencies
+└── tsconfig.json                    # TypeScript configuration
 ```
+
+See [docs/guides/project-structure.md](docs/guides/project-structure.md) for detailed structure documentation.
 
 ## Setup
 

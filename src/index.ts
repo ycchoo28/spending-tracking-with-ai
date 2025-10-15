@@ -1,17 +1,16 @@
-import { getConfig, ConfigValidationError } from './config/config';
-import { DatabaseClient } from './database/database';
-import { VisionProcessor } from './vision/vision-processor';
-import { TransactionCategorizer } from './categorizer/categorizer';
-import { TelegramBotHandler } from './telegram/telegram-bot';
-import { WorkflowState } from './workflow/workflow';
-import { createWorkflowGraph } from './workflow/graph';
-import { logger } from './utils/logger';
+import { config, validateConfig } from './core/config';
+import { DatabaseClient } from './core/database/database';
+import { VisionProcessor } from './features/receipt-processing/vision/vision-processor';
+import { TransactionCategorizer } from './features/receipt-processing/categorizer/categorizer';
+import { TelegramBotHandler } from './features/telegram-bot/telegram-bot';
+import { WorkflowState } from './features/receipt-processing/workflow/types';
+import { createWorkflowGraph } from './features/receipt-processing/workflow/graph';
+import { logger } from './core/utils/logger';
 
 /**
  * Main application class that orchestrates all components
  */
 class ReceiptTrackerAgent {
-  private config!: ReturnType<typeof getConfig>;
   private database!: DatabaseClient;
   private visionProcessor!: VisionProcessor;
   private categorizer!: TransactionCategorizer;
@@ -28,47 +27,45 @@ class ReceiptTrackerAgent {
 
       // Load and validate configuration
       logger.info('📋 Loading configuration...');
-      this.config = getConfig();
+      validateConfig();
       logger.info('✅ Configuration loaded successfully', {
-        logLevel: this.config.app.logLevel,
-        nodeEnv: this.config.app.nodeEnv,
-        confidenceThreshold: this.config.app.confidenceThreshold,
+        confidenceThreshold: config.workflow.confidenceThreshold,
       });
 
       // Initialize DatabaseClient
       logger.info('🗄️  Initializing database client...');
       this.database = new DatabaseClient(
-        this.config.supabase.url,
-        this.config.supabase.key
+        config.database.url,
+        config.database.key
       );
       logger.info('✅ Database client initialized');
 
       // Initialize VisionProcessor
       logger.info('👁️  Initializing vision processor...');
       this.visionProcessor = new VisionProcessor({
-        apiKey: this.config.openai.apiKey,
-        apiBase: this.config.openai.apiBase,
-        model: this.config.openai.visionModel,
-        maxRetries: this.config.app.maxRetries,
-        retryDelay: this.config.app.retryDelay,
+        apiKey: config.openai.apiKey,
+        apiBase: config.openai.apiBase,
+        model: config.openai.visionModel,
+        maxRetries: config.workflow.maxRetries,
+        retryDelay: config.workflow.retryDelay,
       });
       logger.info('✅ Vision processor initialized', {
-        model: this.config.openai.visionModel,
+        model: config.openai.visionModel,
       });
 
       // Initialize TransactionCategorizer
       logger.info('🏷️  Initializing transaction categorizer...');
       this.categorizer = new TransactionCategorizer(
         {
-          apiKey: this.config.openai.apiKey,
-          apiBase: this.config.openai.apiBase,
-          model: this.config.openai.textModel,
-          confidenceThreshold: this.config.app.confidenceThreshold,
+          apiKey: config.openai.apiKey,
+          apiBase: config.openai.apiBase,
+          model: config.openai.categorizerModel,
+          confidenceThreshold: config.workflow.confidenceThreshold,
         },
         this.database
       );
       logger.info('✅ Transaction categorizer initialized', {
-        model: this.config.openai.textModel,
+        model: config.openai.categorizerModel,
       });
 
       // Initialize LangGraph workflow
@@ -77,16 +74,16 @@ class ReceiptTrackerAgent {
         visionProcessor: this.visionProcessor,
         categorizer: this.categorizer,
         database: this.database,
-        confidenceThreshold: this.config.app.confidenceThreshold,
-        maxRetries: this.config.app.maxRetries,
-        retryDelay: this.config.app.retryDelay,
+        confidenceThreshold: config.workflow.confidenceThreshold,
+        maxRetries: config.workflow.maxRetries,
+        retryDelay: config.workflow.retryDelay,
       });
       logger.info('✅ Workflow graph initialized');
 
       // Initialize TelegramBotHandler
       logger.info('🤖 Initializing Telegram bot...');
       this.telegramBot = new TelegramBotHandler({
-        botToken: this.config.telegram.botToken,
+        botToken: config.telegram.botToken,
         database: this.database,
         onPhotoReceived: this.handlePhotoReceived.bind(this),
         onCategorySelected: this.handleCategorySelected.bind(this),
@@ -95,13 +92,9 @@ class ReceiptTrackerAgent {
 
       logger.info('✨ Receipt Tracker Agent initialized successfully!');
     } catch (error) {
-      if (error instanceof ConfigValidationError) {
-        logger.error('❌ Configuration error', error);
-        console.error('\n💡 Please check your .env file and ensure all required variables are set.');
-        console.error('   See .env.example for reference.');
-      } else {
-        logger.error('❌ Initialization error', error);
-      }
+      logger.error('❌ Initialization error', error);
+      console.error('\n💡 Please check your .env file and ensure all required variables are set.');
+      console.error('   See .env.example for reference.');
       throw error;
     }
   }
@@ -113,7 +106,7 @@ class ReceiptTrackerAgent {
    */
   private async handlePhotoReceived(state: WorkflowState): Promise<void> {
     const operationId = `photo_${state.telegramUserId}_${Date.now()}`;
-    
+
     try {
       // Log image received
       if (state.imageData) {
@@ -128,17 +121,57 @@ class ReceiptTrackerAgent {
       logger.info(`📸 Processing photo for user ${state.telegramUserId}...`);
 
       // Execute the workflow graph
+      logger.debug('Invoking workflow graph', {
+        userId: state.telegramUserId,
+        hasImageData: !!state.imageData,
+        imageSize: state.imageData?.length,
+      });
+
       const result = await this.workflowGraph.invoke(state);
+
+      logger.info('📊 Workflow execution completed', {
+        userId: state.telegramUserId,
+        hasError: !!result.error,
+        errorType: result.errorType,
+        extractionValid: result.extractionValid,
+        needsClarification: result.needsClarification,
+        hasExtractedData: !!result.extractedData,
+        hasCategory: !!result.category,
+        hasTransactionId: !!result.transactionId,
+        extractedData: result.extractedData ? {
+          merchant: result.extractedData.merchantName,
+          amount: result.extractedData.amount,
+          currency: result.extractedData.currency,
+          confidence: result.extractedData.confidence,
+        } : null,
+      });
 
       // Handle workflow result
       if (result.error) {
-        logger.error(`❌ Workflow error for user ${state.telegramUserId}`, result.error, {
+        logger.error(`❌ Workflow error for user ${state.telegramUserId}`, undefined, {
           errorType: result.errorType,
+          errorMessage: result.error,
+          userId: state.telegramUserId,
+          // Log full workflow state for debugging
+          fullWorkflowResult: {
+            error: result.error,
+            errorType: result.errorType,
+            extractionValid: result.extractionValid,
+            needsClarification: result.needsClarification,
+            hasExtractedData: !!result.extractedData,
+            extractedData: result.extractedData,
+            hasCategory: !!result.category,
+            category: result.category,
+            confidence: result.confidence,
+            hasTransactionId: !!result.transactionId,
+            transactionId: result.transactionId,
+            awaitingUserInput: result.awaitingUserInput,
+          },
         });
-        
+
         // End performance tracking with failure
         logger.endPerformanceTracking(operationId, false, result.error);
-        
+
         // Send error message to user
         await this.telegramBot.sendErrorMessage(
           state.chatId,
@@ -164,7 +197,7 @@ class ReceiptTrackerAgent {
           category: result.category,
           confidence: result.confidence,
         });
-        
+
         // Log categorization
         if (result.category && result.confidence !== undefined) {
           logger.logCategorization(
@@ -174,7 +207,7 @@ class ReceiptTrackerAgent {
             true
           );
         }
-        
+
         // Send category options to user
         await this.telegramBot.sendCategoryOptions(
           state.chatId,
@@ -182,7 +215,7 @@ class ReceiptTrackerAgent {
           result.suggestedCategories,
           result.transactionId
         );
-        
+
         // End performance tracking
         logger.endPerformanceTracking(operationId, true, undefined, {
           needsClarification: true,
@@ -201,7 +234,7 @@ class ReceiptTrackerAgent {
             false
           );
         }
-        
+
         // Log storage
         logger.logStorage(
           state.telegramUserId,
@@ -209,16 +242,16 @@ class ReceiptTrackerAgent {
           result.extractedData.amount,
           result.category
         );
-        
+
         logger.info(`✅ Transaction stored for user ${state.telegramUserId}: ${result.transactionId}`);
-        
+
         await this.telegramBot.sendConfirmation(
           state.chatId,
           result.extractedData,
           result.category,
           result.transactionId
         );
-        
+
         // End performance tracking with success
         logger.endPerformanceTracking(operationId, true, undefined, {
           transactionId: result.transactionId,
@@ -228,10 +261,10 @@ class ReceiptTrackerAgent {
       logger.error('❌ Error handling photo', error, {
         userId: state.telegramUserId,
       });
-      
+
       // End performance tracking with failure
       logger.endPerformanceTracking(operationId, false, (error as Error).message);
-      
+
       // Send generic error message to user
       await this.telegramBot.sendErrorMessage(
         state.chatId,
@@ -266,7 +299,7 @@ class ReceiptTrackerAgent {
 
       // Fetch the updated transaction to send confirmation
       const transactions = await this.database.getUserTransactions(userId, 1);
-      
+
       if (transactions.length > 0 && transactions[0].id === transactionId) {
         // Category updated successfully
         logger.info(`✅ Category updated successfully for transaction ${transactionId}`);
@@ -287,10 +320,10 @@ class ReceiptTrackerAgent {
   async start(): Promise<void> {
     try {
       logger.info('🚀 Starting Receipt Tracker Agent...');
-      
+
       // Launch the Telegram bot
       await this.telegramBot.launch();
-      
+
       logger.info('✅ Receipt Tracker Agent is running!');
       logger.info('📱 Send receipts to your Telegram bot to start tracking expenses.');
       logger.info('');
@@ -307,11 +340,11 @@ class ReceiptTrackerAgent {
    */
   async stop(signal?: string): Promise<void> {
     logger.info(`\n🛑 Shutting down Receipt Tracker Agent... (${signal || 'manual'})`);
-    
+
     try {
       // Stop the Telegram bot
       await this.telegramBot.stop(signal);
-      
+
       logger.info('✅ Receipt Tracker Agent stopped successfully');
     } catch (error) {
       logger.error('❌ Error during shutdown', error);
