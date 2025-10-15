@@ -5,6 +5,7 @@ import { WorkflowState } from '../receipt-processing/workflow/types';
 import { ExtractedTransaction } from '../receipt-processing/vision/vision-processor';
 import { CATEGORIES, Category } from '../receipt-processing/categorizer/categorizer';
 import { logger } from '../../core/utils/logger';
+import { WorkflowStateManager, PendingWorkflow } from './workflow-state-manager';
 
 /**
  * Configuration for TelegramBotHandler
@@ -14,6 +15,7 @@ export interface TelegramBotConfig {
   database: DatabaseClient;
   onPhotoReceived?: (state: WorkflowState) => Promise<void>;
   onCategorySelected?: (userId: string, transactionId: string, category: string) => Promise<void>;
+  onUserTextInput?: (userId: string, chatId: number, text: string, pendingWorkflow: PendingWorkflow) => Promise<void>;
 }
 
 /**
@@ -34,8 +36,10 @@ export class TelegramBotHandler {
   private bot: Telegraf;
   private botToken: string;
   private database: DatabaseClient;
+  private workflowStateManager: WorkflowStateManager;
   private onPhotoReceived?: (state: WorkflowState) => Promise<void>;
   private onCategorySelected?: (userId: string, transactionId: string, category: string) => Promise<void>;
+  private onUserTextInput?: (userId: string, chatId: number, text: string, pendingWorkflow: PendingWorkflow) => Promise<void>;
 
   /**
    * Initialize the Telegram bot handler
@@ -55,11 +59,16 @@ export class TelegramBotHandler {
       this.botToken = config.botToken;
       this.bot = new Telegraf(config.botToken);
       this.database = config.database;
+      this.workflowStateManager = new WorkflowStateManager();
       this.onPhotoReceived = config.onPhotoReceived;
       this.onCategorySelected = config.onCategorySelected;
+      this.onUserTextInput = config.onUserTextInput;
 
       // Register command handlers
       this.registerHandlers();
+
+      // Start cleanup interval (every 30 minutes)
+      setInterval(() => this.workflowStateManager.cleanup(), 30 * 60 * 1000);
     } catch (error) {
       throw new TelegramBotError(
         'Failed to initialize Telegram bot',
@@ -77,9 +86,13 @@ export class TelegramBotHandler {
     this.bot.command('start', (ctx) => this.handleStartCommand(ctx));
     this.bot.command('help', (ctx) => this.handleHelpCommand(ctx));
     this.bot.command('stats', (ctx) => this.handleStatsCommand(ctx));
+    this.bot.command('cancel', (ctx) => this.handleCancelCommand(ctx));
 
     // Photo message handler
     this.bot.on('photo', (ctx) => this.handlePhoto(ctx));
+
+    // Text message handler (for user corrections)
+    this.bot.on('text', (ctx) => this.handleTextMessage(ctx));
 
     // Callback query handler for category selection
     this.bot.on('callback_query', (ctx) => this.handleCallbackQuery(ctx));
@@ -148,6 +161,26 @@ Let's get started! Send me your first receipt or transaction screenshot.
         'Failed to send welcome message. Please try again.',
         'unknown'
       );
+    }
+  }
+
+  /**
+   * Handle /cancel command - cancel pending workflow
+   * @param ctx - Telegram context
+   */
+  private async handleCancelCommand(ctx: Context): Promise<void> {
+    const userId = ctx.from?.id.toString();
+    
+    if (!userId) {
+      await ctx.reply('Unable to identify user.');
+      return;
+    }
+
+    if (this.workflowStateManager.hasPending(userId)) {
+      this.workflowStateManager.clearPending(userId);
+      await ctx.reply('✅ Cancelled. You can send a new receipt or photo.');
+    } else {
+      await ctx.reply('No pending operation to cancel.');
     }
   }
 
@@ -542,6 +575,63 @@ Need more help? Contact support or check our documentation.
   }
 
   /**
+   * Handle text messages - check for pending workflows that need user input
+   * @param ctx - Telegram context with text message
+   */
+  private async handleTextMessage(ctx: Context): Promise<void> {
+    try {
+      if (!ctx.message || !('text' in ctx.message)) {
+        return;
+      }
+
+      const userId = ctx.from?.id.toString();
+      const chatId = ctx.chat?.id;
+      const text = ctx.message.text;
+
+      if (!userId || !chatId) {
+        return;
+      }
+
+      // Check if this is a command (starts with /)
+      if (text.startsWith('/')) {
+        // Commands are handled by their specific handlers
+        return;
+      }
+
+      // Check if user has a pending workflow
+      const pendingWorkflow = this.workflowStateManager.getPending(userId);
+
+      if (!pendingWorkflow) {
+        // No pending workflow, send helpful message
+        await ctx.reply(
+          '📸 Please send me a photo of your receipt or e-wallet transaction screenshot.\n\n' +
+          'Use /help to see what I can do.'
+        );
+        return;
+      }
+
+      // User has a pending workflow, process their input
+      logger.info('Processing user text input for pending workflow', {
+        userId,
+        workflowType: pendingWorkflow.type,
+        textLength: text.length,
+      });
+
+      // Trigger the text input callback
+      if (this.onUserTextInput) {
+        await this.onUserTextInput(userId, chatId, text, pendingWorkflow);
+      } else {
+        // Fallback if no handler
+        await ctx.reply('✅ Input received. Processing...');
+        this.workflowStateManager.clearPending(userId);
+      }
+    } catch (error) {
+      console.error('Error handling text message:', error);
+      await ctx.reply('❌ An error occurred processing your message. Please try again.');
+    }
+  }
+
+  /**
    * Handle callback queries from inline keyboard buttons
    * @param ctx - Telegram context with callback query
    */
@@ -843,6 +933,117 @@ Need more help? Contact support or check our documentation.
     logger.info(`🛑 Stopping Telegram bot... (${signal || 'manual'})`);
     await this.bot.stop(signal);
     logger.info('✅ Telegram bot stopped');
+  }
+
+  /**
+   * Request merchant name correction from user
+   * @param chatId - The chat ID
+   * @param state - The workflow state
+   * @param extractedData - The extracted transaction data
+   */
+  async requestMerchantCorrection(
+    chatId: number,
+    state: WorkflowState,
+    extractedData: ExtractedTransaction
+  ): Promise<void> {
+    try {
+      const message = 
+        `❌ I couldn't identify the merchant name from your receipt.\n\n` +
+        `💰 Amount: ${extractedData.currency} ${extractedData.amount.toFixed(2)}\n` +
+        `🏪 Merchant: ${extractedData.merchantName}\n\n` +
+        `📝 Please reply with the correct merchant name, or send /cancel to start over.`;
+
+      await this.bot.telegram.sendMessage(chatId, message);
+
+      // Store pending workflow
+      this.workflowStateManager.setPending(state.telegramUserId, {
+        userId: state.telegramUserId,
+        chatId,
+        type: 'merchant_correction',
+        state,
+        extractedData,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to request merchant correction:', error);
+    }
+  }
+
+  /**
+   * Request amount correction from user
+   * @param chatId - The chat ID
+   * @param state - The workflow state
+   * @param extractedData - The extracted transaction data
+   */
+  async requestAmountCorrection(
+    chatId: number,
+    state: WorkflowState,
+    extractedData: ExtractedTransaction
+  ): Promise<void> {
+    try {
+      const message = 
+        `❌ I couldn't extract the amount from your receipt.\n\n` +
+        `🏪 Merchant: ${extractedData.merchantName}\n` +
+        `💰 Amount: ${extractedData.currency} ${extractedData.amount.toFixed(2)}\n\n` +
+        `📝 Please reply with the correct amount (e.g., "16.50"), or send /cancel to start over.`;
+
+      await this.bot.telegram.sendMessage(chatId, message);
+
+      // Store pending workflow
+      this.workflowStateManager.setPending(state.telegramUserId, {
+        userId: state.telegramUserId,
+        chatId,
+        type: 'amount_correction',
+        state,
+        extractedData,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to request amount correction:', error);
+    }
+  }
+
+  /**
+   * Request retry with user guidance
+   * @param chatId - The chat ID
+   * @param state - The workflow state
+   * @param errorMessage - The error message
+   */
+  async requestRetryWithGuidance(
+    chatId: number,
+    state: WorkflowState,
+    errorMessage: string
+  ): Promise<void> {
+    try {
+      const message = 
+        `❌ ${errorMessage}\n\n` +
+        `💡 What would you like to do?\n\n` +
+        `1️⃣ Send a clearer photo of the receipt\n` +
+        `2️⃣ Type the transaction details manually (reply with merchant name)\n` +
+        `3️⃣ /cancel to start over`;
+
+      await this.bot.telegram.sendMessage(chatId, message);
+
+      // Store pending workflow
+      this.workflowStateManager.setPending(state.telegramUserId, {
+        userId: state.telegramUserId,
+        chatId,
+        type: 'retry_extraction',
+        state,
+        errorMessage,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to request retry with guidance:', error);
+    }
+  }
+
+  /**
+   * Get the workflow state manager
+   * @returns The workflow state manager instance
+   */
+  getWorkflowStateManager(): WorkflowStateManager {
+    return this.workflowStateManager;
   }
 
   /**

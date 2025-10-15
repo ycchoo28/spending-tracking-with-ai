@@ -44,6 +44,11 @@ export const config = {
     project: process.env.LANGSMITH_PROJECT,
     tracing: process.env.LANGSMITH_TRACING === 'true',
   },
+
+  // Monitoring Configuration
+  monitoring: {
+    memoryIntervalMs: parseInt(process.env.MEMORY_MONITOR_INTERVAL_MS || '30000'),
+  },
 };
 
 /**
