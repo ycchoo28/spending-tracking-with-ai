@@ -1,0 +1,35 @@
+logging:
+  receivers:
+    pm2_logs:
+      type: files
+      include_paths:
+        - /home/*/.pm2/logs/*-out.log
+        - /home/*/.pm2/logs/*-error.log
+      record_log_file_path: true
+
+  processors:
+    pm2_parser:
+      type: parse_regex
+      field: message
+      regex: '^(?<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z)\s+(?<level>\w+)\s+(?<message>.*)'
+      time_key: timestamp
+      time_format: "%Y-%m-%dT%H:%M:%S.%LZ"
+
+  service:
+    pipelines:
+      pm2_pipeline:
+        receivers:
+          - pm2_logs
+        processors:
+          - pm2_parser
+
+metrics:
+  receivers:
+    hostmetrics:
+      type: hostmetrics
+      collection_interval: 60s
+  service:
+    pipelines:
+      default_pipeline:
+        receivers:
+          - hostmetrics

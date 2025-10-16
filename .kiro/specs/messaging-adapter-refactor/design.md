@@ -66,32 +66,32 @@ Platform-agnostic data structures used across all adapters:
 
 ```typescript
 export interface UserContext {
-  userId: string;           // Platform-agnostic user identifier
-  sessionId: string;        // Platform-agnostic session identifier
-  metadata?: Record<string, any>;  // Platform-specific metadata
+  userId: string; // Platform-agnostic user identifier
+  sessionId: string; // Platform-agnostic session identifier
+  metadata?: Record<string, any>; // Platform-specific metadata
 }
 
 export interface ImageInput {
-  data: Buffer;             // Image binary data
-  url?: string;             // Optional image URL
-  mimeType?: string;        // Image MIME type
+  data: Buffer; // Image binary data
+  url?: string; // Optional image URL
+  mimeType?: string; // Image MIME type
 }
 
 export interface TextMessage {
-  text: string;             // Message content
-  format?: 'plain' | 'markdown' | 'html';  // Text formatting
+  text: string; // Message content
+  format?: "plain" | "markdown" | "html"; // Text formatting
 }
 
 export interface OptionButton {
-  id: string;               // Unique option identifier
-  label: string;            // Display label
-  value: string;            // Option value
+  id: string; // Unique option identifier
+  label: string; // Display label
+  value: string; // Option value
 }
 
 export interface OptionsMessage {
-  text: string;             // Prompt text
-  options: OptionButton[];  // Available options
-  allowMultiple?: boolean;  // Allow multiple selections
+  text: string; // Prompt text
+  options: OptionButton[]; // Available options
+  allowMultiple?: boolean; // Allow multiple selections
 }
 
 export interface TransactionSummary {
@@ -107,7 +107,14 @@ export interface TransactionSummary {
 
 export interface ErrorMessage {
   message: string;
-  errorType?: 'extraction' | 'categorization' | 'storage' | 'validation' | 'network' | 'timeout' | 'unknown';
+  errorType?:
+    | "extraction"
+    | "categorization"
+    | "storage"
+    | "validation"
+    | "network"
+    | "timeout"
+    | "unknown";
   suggestions?: string[];
 }
 ```
@@ -123,7 +130,10 @@ export interface MessagingAdapter {
   // Outbound messaging methods
   sendMessage(context: UserContext, message: TextMessage): Promise<void>;
   sendOptions(context: UserContext, message: OptionsMessage): Promise<void>;
-  sendTransactionConfirmation(context: UserContext, transaction: TransactionSummary): Promise<void>;
+  sendTransactionConfirmation(
+    context: UserContext,
+    transaction: TransactionSummary
+  ): Promise<void>;
   sendError(context: UserContext, error: ErrorMessage): Promise<void>;
   requestTextInput(context: UserContext, prompt: string): Promise<void>;
 }
@@ -131,8 +141,16 @@ export interface MessagingAdapter {
 export interface MessagingAdapterCallbacks {
   onImageReceived: (context: UserContext, image: ImageInput) => Promise<void>;
   onTextReceived: (context: UserContext, text: string) => Promise<void>;
-  onOptionSelected: (context: UserContext, optionId: string, optionValue: string) => Promise<void>;
-  onCommand?: (context: UserContext, command: string, args: string[]) => Promise<void>;
+  onOptionSelected: (
+    context: UserContext,
+    optionId: string,
+    optionValue: string
+  ) => Promise<void>;
+  onCommand?: (
+    context: UserContext,
+    command: string,
+    args: string[]
+  ) => Promise<void>;
 }
 ```
 
@@ -141,6 +159,7 @@ export interface MessagingAdapterCallbacks {
 Implements `MessagingAdapter` for Telegram:
 
 **Key Responsibilities:**
+
 - Initialize Telegraf bot
 - Register Telegram-specific handlers (photo, text, callback_query, commands)
 - Translate platform-agnostic messages to Telegram API calls
@@ -148,6 +167,7 @@ Implements `MessagingAdapter` for Telegram:
 - Manage Telegram-specific state (WorkflowStateManager)
 
 **Implementation Details:**
+
 - Uses Telegraf library for Telegram Bot API
 - Converts Telegram user IDs to UserContext
 - Downloads photos and converts to ImageInput
@@ -159,12 +179,14 @@ Implements `MessagingAdapter` for Telegram:
 Implements `MessagingAdapter` for CLI/testing:
 
 **Key Responsibilities:**
+
 - Provide readline interface for user input
 - Display messages to console
 - Accept commands: `image <path>`, `text <msg>`, `exit`
 - Simulate user interactions for testing
 
 **Implementation Details:**
+
 - Uses Node.js readline module
 - Reads image files from filesystem
 - Displays numbered options for selection
@@ -199,19 +221,36 @@ export class WorkflowOrchestrator {
   }
 
   // Main workflow handlers
-  async handleImageReceived(context: UserContext, image: ImageInput): Promise<void>;
+  async handleImageReceived(
+    context: UserContext,
+    image: ImageInput
+  ): Promise<void>;
   async handleTextReceived(context: UserContext, text: string): Promise<void>;
-  async handleOptionSelected(context: UserContext, optionId: string, optionValue: string): Promise<void>;
+  async handleOptionSelected(
+    context: UserContext,
+    optionId: string,
+    optionValue: string
+  ): Promise<void>;
 
   // Correction handlers
-  private async handleMerchantCorrection(context: UserContext, merchantName: string): Promise<void>;
-  private async handleAmountCorrection(context: UserContext, amountText: string): Promise<void>;
-  private async handleRetryExtraction(context: UserContext, text: string): Promise<void>;
+  private async handleMerchantCorrection(
+    context: UserContext,
+    merchantName: string
+  ): Promise<void>;
+  private async handleAmountCorrection(
+    context: UserContext,
+    amountText: string
+  ): Promise<void>;
+  private async handleRetryExtraction(
+    context: UserContext,
+    text: string
+  ): Promise<void>;
 }
 ```
 
 Note: The orchestrator imports `createWorkflowGraph` from `workflow.ts` (renamed from `graph.ts`).
-```
+
+````
 
 **Key Responsibilities:**
 - Execute workflow graph for image processing
@@ -277,7 +316,7 @@ class ReceiptTrackerAgent {
     await this.messagingAdapter.stop(signal);
   }
 }
-```
+````
 
 ## Data Models
 
@@ -287,7 +326,11 @@ Tracks pending workflows that require user input:
 
 ```typescript
 interface PendingWorkflowContext {
-  type: 'merchant_correction' | 'amount_correction' | 'retry_extraction' | 'category_selection';
+  type:
+    | "merchant_correction"
+    | "amount_correction"
+    | "retry_extraction"
+    | "category_selection";
   timestamp: number;
   extractedData?: ExtractedTransaction;
   transactionId?: string;
@@ -338,30 +381,36 @@ All errors use the standardized `ErrorMessage` type with appropriate `errorType`
 ## Migration Strategy
 
 ### Phase 1: Rename Workflow Files
+
 - Rename `graph.ts` to `workflow.ts` for better clarity
 - Update all imports across the codebase
 
 ### Phase 2: Create Abstraction Layer
+
 - Create messaging types
 - Create MessagingAdapter interface
 - Create ConsoleAdapter for testing
 
 ### Phase 3: Implement Telegram Adapter
+
 - Extract Telegram code from index.ts
 - Implement TelegramAdapter
 - Test with existing functionality
 
 ### Phase 4: Create Workflow Orchestrator
+
 - Extract workflow logic from index.ts
 - Create WorkflowOrchestrator class
 - Wire orchestrator with adapter
 
 ### Phase 5: Refactor index.ts
+
 - Simplify to bootstrap only
 - Wire components together
 - Test end-to-end
 
 ### Phase 6: Cleanup
+
 - Remove old Telegram bot handler (if separate)
 - Update documentation
 - Verify all tests pass
@@ -391,6 +440,7 @@ To add a new messaging platform (e.g., WhatsApp):
 4. Inject into orchestrator in index.ts
 
 No changes needed to:
+
 - WorkflowOrchestrator
 - Workflow Graph
 - Core business logic
@@ -406,13 +456,16 @@ New messaging features (e.g., voice messages, location sharing):
 ## Dependencies
 
 ### New Dependencies
+
 - None (uses existing Telegraf, readline is built-in)
 
 ### Modified Files
+
 - `src/index.ts` - Simplified to bootstrap only
 - `src/features/telegram-bot/telegram-bot.ts` - May be deprecated or refactored
 
 ### New Files
+
 - `src/core/messaging/types.ts`
 - `src/core/messaging/messaging-adapter.ts`
 - `src/core/messaging/telegram-adapter.ts`
@@ -420,6 +473,7 @@ New messaging features (e.g., voice messages, location sharing):
 - `src/features/receipt-processing/workflow/workflow-orchestrator.ts`
 
 ### Renamed Files (for better clarity)
+
 - `src/features/receipt-processing/workflow/graph.ts` → `src/features/receipt-processing/workflow/workflow.ts`
   - Rationale: "workflow.ts" better describes that this file creates and configures the LangGraph workflow
 

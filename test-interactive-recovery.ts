@@ -365,6 +365,12 @@ class TestApp {
           payment_method: pendingWorkflow.extractedData.paymentMethod,
           transaction_reference: pendingWorkflow.extractedData.transactionReference,
           confidence_score: categorizationResult.confidence,
+          // Additional workflow and processing fields
+          processing_status: 'completed',
+          extraction_confidence: pendingWorkflow.extractedData.confidence,
+          awaiting_user_input: false,
+          retry_count: 0,
+          workflow_execution_id: `wf_${userId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
         });
 
         await this.telegramBot.sendConfirmation(
@@ -430,6 +436,12 @@ class TestApp {
           payment_method: pendingWorkflow.extractedData.paymentMethod,
           transaction_reference: pendingWorkflow.extractedData.transactionReference,
           confidence_score: categorizationResult.confidence,
+          // Additional workflow and processing fields
+          processing_status: 'completed',
+          extraction_confidence: pendingWorkflow.extractedData.confidence,
+          awaiting_user_input: false,
+          retry_count: 0,
+          workflow_execution_id: `wf_${userId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
         });
 
         await this.telegramBot.sendConfirmation(

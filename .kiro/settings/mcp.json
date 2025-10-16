@@ -10,7 +10,10 @@
       "disabled": false,
       "autoApprove": [
         "list_tables",
-        "apply_migration"
+        "apply_migration",
+        "search_docs",
+        "list_migrations",
+        "execute_sql"
       ]
     }
   }
