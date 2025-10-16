@@ -41,6 +41,9 @@ export interface WorkflowState {
 
   // Confirmation message
   confirmationMessage?: string;
+
+  // Workflow execution tracking (LangGraph native run ID)
+  workflowExecutionId?: string;
 }
 
 /**

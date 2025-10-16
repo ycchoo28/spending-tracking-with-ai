@@ -1,8 +1,8 @@
 import { MessagingAdapter } from '../../../core/messaging/messaging-adapter';
-import { 
-  UserContext, 
-  ImageInput, 
-  TransactionSummary, 
+import {
+  UserContext,
+  ImageInput,
+  TransactionSummary,
   OptionsMessage
 } from '../../../core/messaging/types';
 import { createWorkflowGraph } from './workflow';
@@ -51,12 +51,13 @@ export class WorkflowOrchestrator {
   }
 
   async handleImageReceived(context: UserContext, image: ImageInput): Promise<void> {
-    const operationId = `photo_${context.userId}_${Date.now()}`;
+    // Generate a unique workflow execution ID for this run
+    const workflowExecutionId = `wf_${context.userId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const adapter = this.getAdapter();
 
     try {
       logger.logImageReceived(context.userId, image.data.length);
-      logger.startPerformanceTracking(operationId, 'process_photo', {
+      logger.startPerformanceTracking(workflowExecutionId, 'process_photo', {
         userId: context.userId,
       });
 
@@ -68,31 +69,48 @@ export class WorkflowOrchestrator {
         awaitingUserInput: false,
         needsClarification: false,
         extractionValid: false,
+        workflowExecutionId: workflowExecutionId,
       };
 
-      const result = await this.workflowGraph.invoke(workflowState);
+      const config = {
+        metadata: {
+          userId: context.userId,
+          sessionId: context.sessionId,
+          workflowExecutionId: workflowExecutionId,
+        }
+      };
+
+      const result = await this.workflowGraph.invoke(workflowState, config);
+
+      // Log the execution
+      logger.info('LangGraph execution completed', {
+        userId: context.userId,
+        hasError: !!result.error,
+        needsClarification: !!result.needsClarification,
+        workflowExecutionId: result.workflowExecutionId,
+      });
 
       if (result.error) {
-        await this.handleWorkflowError(context, result as WorkflowState, operationId);
+        await this.handleWorkflowError(context, result as WorkflowState, workflowExecutionId);
         return;
       }
 
       if (result.needsClarification && result.extractedData) {
         await this.handleClarificationNeeded(context, result as WorkflowState);
-        logger.endPerformanceTracking(operationId, true, undefined, {
+        logger.endPerformanceTracking(workflowExecutionId, true, undefined, {
           needsClarification: true,
         });
         return;
       }
 
       if (result.transactionId && result.extractedData && result.category) {
-        await this.handleTransactionSuccess(context, result as WorkflowState, operationId);
+        await this.handleTransactionSuccess(context, result as WorkflowState, workflowExecutionId);
       }
     } catch (error) {
       logger.error('❌ Error handling photo', error, {
         userId: context.userId,
       });
-      logger.endPerformanceTracking(operationId, false, (error as Error).message);
+      logger.endPerformanceTracking(workflowExecutionId, false, (error as Error).message);
       await adapter.sendError(context, {
         message: 'An unexpected error occurred while processing your photo.',
         errorType: 'unknown'
@@ -140,7 +158,7 @@ export class WorkflowOrchestrator {
 
       if (optionId.startsWith('category_')) {
         const transactionId = optionId.replace('category_', '');
-        
+
         if (transactionId && transactionId !== 'temp') {
           await this.categorizer.learnFromCorrection(transactionId, optionValue);
         }
@@ -154,10 +172,10 @@ export class WorkflowOrchestrator {
     }
   }
 
-  private async handleWorkflowError(context: UserContext, result: WorkflowState, operationId: string): Promise<void> {
+  private async handleWorkflowError(context: UserContext, result: WorkflowState, workflowExecutionId: string): Promise<void> {
     const adapter = this.getAdapter();
-    
-    logger.endPerformanceTracking(operationId, false, result.error);
+
+    logger.endPerformanceTracking(workflowExecutionId, false, result.error);
 
     if (result.errorType === 'validation' && result.extractedData) {
       if (!result.extractedData.merchantName || result.extractedData.merchantName === 'Unknown Merchant') {
@@ -180,7 +198,7 @@ export class WorkflowOrchestrator {
 
   private async handleClarificationNeeded(context: UserContext, result: WorkflowState): Promise<void> {
     const adapter = this.getAdapter();
-    
+
     if (!result.extractedData) return;
 
     const options = (result.suggestedCategories || []).map(category => ({
@@ -191,18 +209,18 @@ export class WorkflowOrchestrator {
 
     const optionsMessage: OptionsMessage = {
       text: `🤔 I need your help categorizing this transaction:\n\n` +
-            `💰 Amount: ${result.extractedData.currency} ${result.extractedData.amount.toFixed(2)}\n` +
-            `🏪 Merchant: ${result.extractedData.merchantName}\n\n` +
-            `📁 Please select the appropriate category:`,
+        `💰 Amount: ${result.extractedData.currency} ${result.extractedData.amount.toFixed(2)}\n` +
+        `🏪 Merchant: ${result.extractedData.merchantName}\n\n` +
+        `📁 Please select the appropriate category:`,
       options
     };
 
     await adapter.sendOptions(context, optionsMessage);
   }
 
-  private async handleTransactionSuccess(context: UserContext, result: WorkflowState, operationId: string): Promise<void> {
+  private async handleTransactionSuccess(context: UserContext, result: WorkflowState, workflowExecutionId: string): Promise<void> {
     const adapter = this.getAdapter();
-    
+
     if (!result.extractedData || !result.category || !result.transactionId) return;
 
     const transaction: TransactionSummary = {
@@ -217,7 +235,7 @@ export class WorkflowOrchestrator {
     };
 
     await adapter.sendTransactionConfirmation(context, transaction);
-    logger.endPerformanceTracking(operationId, true, undefined, {
+    logger.endPerformanceTracking(workflowExecutionId, true, undefined, {
       transactionId: result.transactionId,
     });
   }
@@ -229,7 +247,7 @@ export class WorkflowOrchestrator {
       extractedData
     });
 
-    await this.getAdapter().requestTextInput(context, 
+    await this.getAdapter().requestTextInput(context,
       `❌ I couldn't identify the merchant name clearly.\n\n` +
       `💰 Amount: ${extractedData.currency} ${extractedData.amount.toFixed(2)}\n\n` +
       `Please reply with the correct merchant name:`
@@ -264,7 +282,7 @@ export class WorkflowOrchestrator {
 
   private async handleMerchantCorrection(context: UserContext, merchantName: string, pendingWorkflow: PendingWorkflowContext): Promise<void> {
     const adapter = this.getAdapter();
-    
+
     try {
       if (!pendingWorkflow.extractedData) {
         throw new Error('No extracted data in pending workflow');
@@ -307,7 +325,7 @@ export class WorkflowOrchestrator {
 
   private async handleAmountCorrection(context: UserContext, amountText: string, pendingWorkflow: PendingWorkflowContext): Promise<void> {
     const adapter = this.getAdapter();
-    
+
     try {
       if (!pendingWorkflow.extractedData) {
         throw new Error('No extracted data in pending workflow');
@@ -360,7 +378,7 @@ export class WorkflowOrchestrator {
 
   private async handleRetryExtraction(context: UserContext, text: string): Promise<void> {
     const adapter = this.getAdapter();
-    
+
     try {
       await adapter.sendMessage(context, {
         text: `✅ Got it! Merchant: ${text}\n\n📝 Now please reply with the amount (e.g., "16.50")`
@@ -388,6 +406,9 @@ export class WorkflowOrchestrator {
   }
 
   private async storeAndConfirmTransaction(context: UserContext, extractedData: ExtractedTransaction, categorizationResult: any): Promise<void> {
+    // Generate a manual correction run ID since this bypasses LangGraph
+    const manualCorrectionRunId = `manual_${context.userId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
     const transactionId = await this.database.storeTransaction({
       user_id: context.userId,
       telegram_user_id: context.userId,
@@ -399,6 +420,12 @@ export class WorkflowOrchestrator {
       payment_method: extractedData.paymentMethod,
       transaction_reference: extractedData.transactionReference,
       confidence_score: categorizationResult.confidence,
+      // Additional workflow and processing fields
+      processing_status: 'completed',
+      extraction_confidence: extractedData.confidence,
+      awaiting_user_input: false,
+      retry_count: 0,
+      workflow_execution_id: manualCorrectionRunId, // Manual correction run ID
     });
 
     const transaction: TransactionSummary = {

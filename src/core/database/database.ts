@@ -21,6 +21,14 @@ export interface Transaction {
   user_corrected: boolean;
   created_at: string;
   updated_at: string;
+  // Additional workflow and processing fields
+  processing_status?: string;
+  extraction_confidence?: number;
+  awaiting_user_input?: boolean;
+  image_data_hash?: string;
+  retry_count?: number;
+  error_message?: string;
+  workflow_execution_id?: string;
 }
 
 /**
@@ -40,6 +48,14 @@ export interface TransactionInput {
   raw_extracted_data?: any;
   confidence_score?: number;
   user_corrected?: boolean;
+  // Additional workflow and processing fields
+  processing_status?: string;
+  extraction_confidence?: number;
+  awaiting_user_input?: boolean;
+  image_data_hash?: string;
+  retry_count?: number;
+  error_message?: string;
+  workflow_execution_id?: string;
 }
 
 /**
@@ -129,6 +145,14 @@ export class DatabaseClient {
           raw_extracted_data: transaction.raw_extracted_data,
           confidence_score: transaction.confidence_score,
           user_corrected: transaction.user_corrected || false,
+          // Additional workflow and processing fields
+          processing_status: transaction.processing_status || 'completed',
+          extraction_confidence: transaction.extraction_confidence,
+          awaiting_user_input: transaction.awaiting_user_input || false,
+          image_data_hash: transaction.image_data_hash,
+          retry_count: transaction.retry_count || 0,
+          error_message: transaction.error_message,
+          workflow_execution_id: transaction.workflow_execution_id,
         })
         .select('id')
         .single();

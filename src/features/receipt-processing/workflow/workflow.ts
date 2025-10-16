@@ -118,6 +118,10 @@ export function createWorkflowGraph(deps: WorkflowDependencies) {
         value: (left?: string, right?: string) => right ?? left,
         default: () => undefined,
       },
+      workflowExecutionId: {
+        value: (left?: string, right?: string) => right ?? left,
+        default: () => undefined,
+      },
     },
   });
 
@@ -257,6 +261,10 @@ export function createResumptionGraph(deps: WorkflowDependencies) {
         default: () => false,
       },
       confirmationMessage: {
+        value: (left?: string, right?: string) => right ?? left,
+        default: () => undefined,
+      },
+      workflowExecutionId: {
         value: (left?: string, right?: string) => right ?? left,
         default: () => undefined,
       },

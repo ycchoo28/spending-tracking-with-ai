@@ -5,6 +5,27 @@
 import { WorkflowState, WorkflowDependencies } from '../types';
 import { TransactionInput } from '../../../../core/database/database';
 import { logger } from '../../../../core/utils/logger';
+import { createHash } from 'crypto';
+
+/**
+ * Generate a hash of image data for deduplication
+ * @param imageData - Raw image buffer
+ * @returns SHA-256 hash of the image data
+ */
+function generateImageHash(imageData: Buffer): string {
+  return createHash('sha256').update(imageData).digest('hex');
+}
+
+/**
+ * Generate a fallback workflow execution ID (only used if LangGraph doesn't provide one)
+ * @param userId - User ID for context
+ * @returns Unique workflow execution identifier
+ */
+function generateFallbackWorkflowExecutionId(userId: string): string {
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 8);
+  return `fallback_${userId}_${timestamp}_${random}`;
+}
 
 /**
  * Store the transaction in the database
@@ -17,11 +38,22 @@ export async function storeTransactionNode(
   state: WorkflowState,
   deps: WorkflowDependencies
 ): Promise<Partial<WorkflowState>> {
+  // Use workflow execution ID from state (set at workflow start) or generate fallback
+  const workflowExecutionId = state.workflowExecutionId || generateFallbackWorkflowExecutionId(state.telegramUserId);
+  
+  console.log('🔍 Store transaction node - Workflow execution ID:', {
+    stateWorkflowId: state.workflowExecutionId,
+    finalWorkflowId: workflowExecutionId,
+    runIdSource: state.workflowExecutionId ? 'state' : 'fallback'
+  });
+  
   logger.info('💾 Store transaction node started', {
     userId: state.telegramUserId,
     merchant: state.extractedData?.merchantName,
     category: state.category,
     amount: state.extractedData?.amount,
+    workflowExecutionId: workflowExecutionId,
+    runIdSource: state.workflowExecutionId ? 'state' : 'fallback',
   });
 
   const maxRetries = deps.maxRetries || 3;
@@ -55,6 +87,14 @@ export async function storeTransactionNode(
     raw_extracted_data: state.extractedData,
     confidence_score: state.confidence,
     user_corrected: state.awaitingUserInput, // True if user provided category
+    // Additional workflow and processing fields
+    processing_status: state.error ? 'failed' : 'completed',
+    extraction_confidence: state.extractedData.confidence,
+    awaiting_user_input: state.awaitingUserInput,
+    image_data_hash: state.imageData ? generateImageHash(state.imageData) : undefined,
+    retry_count: 0, // This is the final storage attempt, so reset retry count
+    error_message: state.error || undefined,
+    workflow_execution_id: workflowExecutionId, // Use LangGraph's native runId when available
   };
 
   logger.debug('Transaction input prepared', {
@@ -84,6 +124,8 @@ export async function storeTransactionNode(
         merchant: transactionInput.merchant_name,
         amount: transactionInput.amount,
         category: transactionInput.category,
+        workflowExecutionId: transactionInput.workflow_execution_id,
+        runIdSource: state.workflowExecutionId ? 'state' : 'fallback',
       });
 
       return {

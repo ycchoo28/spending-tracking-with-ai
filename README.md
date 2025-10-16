@@ -89,6 +89,7 @@ npm run dev -- setup-database.ts
 ```
 
 Or manually execute the SQL migrations in `src/database/migrations/` in order:
+
 - `001_create_transactions_table.sql`
 - `002_create_user_preferences_table.sql`
 - `003_create_category_learning_table.sql`
@@ -217,25 +218,25 @@ NODE_ENV=production node dist/index.js
 
 Required environment variables:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather | `123456:ABC-DEF...` |
-| `OPENAI_API_KEY` | OpenAI API key or compatible provider | `sk-...` |
-| `OPENAI_API_BASE` | API base URL | `https://api.openai.com/v1` |
-| `SUPABASE_URL` | Supabase project URL | `https://xxx.supabase.co` |
-| `SUPABASE_KEY` | Supabase anon/service key | `eyJ...` |
+| Variable             | Description                           | Example                     |
+| -------------------- | ------------------------------------- | --------------------------- |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather    | `123456:ABC-DEF...`         |
+| `OPENAI_API_KEY`     | OpenAI API key or compatible provider | `sk-...`                    |
+| `OPENAI_API_BASE`    | API base URL                          | `https://api.openai.com/v1` |
+| `SUPABASE_URL`       | Supabase project URL                  | `https://xxx.supabase.co`   |
+| `SUPABASE_KEY`       | Supabase anon/service key             | `eyJ...`                    |
 
 Optional environment variables:
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `OPENAI_VISION_MODEL` | Vision model name | `gpt-4-vision-preview` |
-| `OPENAI_TEXT_MODEL` | Text model name | `gpt-4` |
-| `CONFIDENCE_THRESHOLD` | Categorization confidence threshold (0-1) | `0.8` |
-| `MAX_RETRIES` | Maximum API retry attempts | `3` |
-| `RETRY_DELAY` | Retry delay in milliseconds | `2000` |
-| `LOG_LEVEL` | Logging level (error, warn, info, debug) | `info` |
-| `NODE_ENV` | Environment (development, production) | `development` |
+| Variable               | Description                               | Default                |
+| ---------------------- | ----------------------------------------- | ---------------------- |
+| `OPENAI_VISION_MODEL`  | Vision model name                         | `gpt-4-vision-preview` |
+| `OPENAI_TEXT_MODEL`    | Text model name                           | `gpt-4`                |
+| `CONFIDENCE_THRESHOLD` | Categorization confidence threshold (0-1) | `0.8`                  |
+| `MAX_RETRIES`          | Maximum API retry attempts                | `3`                    |
+| `RETRY_DELAY`          | Retry delay in milliseconds               | `2000`                 |
+| `LOG_LEVEL`            | Logging level (error, warn, info, debug)  | `info`                 |
+| `NODE_ENV`             | Environment (development, production)     | `development`          |
 
 ### Deployment Checklist
 
@@ -253,11 +254,13 @@ Optional environment variables:
 ### Monitoring and Logs
 
 Logs are stored in the `logs/` directory:
+
 - `error.log` - Error logs only (production)
 - `combined.log` - All logs (production)
 - Console output with colorized formatting (development)
 
 Log format includes:
+
 - Timestamp
 - Log level
 - Message
@@ -266,21 +269,25 @@ Log format includes:
 ### Troubleshooting
 
 **Bot not responding:**
+
 - Check if the bot token is correct
 - Verify the bot is running: `pm2 status` or `docker ps`
 - Check logs for errors
 
 **Image processing fails:**
+
 - Verify OpenAI API key is valid
 - Check API endpoint is accessible
 - Ensure image is clear and readable
 
 **Database errors:**
+
 - Verify Supabase credentials
 - Check if migrations have been run
 - Ensure network connectivity to Supabase
 
 **High memory usage:**
+
 - Adjust PM2 `max_memory_restart` setting
 - Check for memory leaks in logs
 - Consider scaling horizontally
