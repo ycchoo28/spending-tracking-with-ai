@@ -4,7 +4,7 @@
   "description": "Intelligent receipt and e-wallet transaction tracking agent using Telegram, LangChain, and Supabase",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx tsc",
     "start": "node dist/index.js",
     "start:memory": "node --expose-gc dist/index.js",
     "dev": "ts-node src/index.ts",
