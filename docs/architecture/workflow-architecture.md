@@ -122,7 +122,7 @@ export function createWorkflowGraph(deps: WorkflowDependencies) {
 **Purpose**: Initializes everything and runs the workflow
 
 ```typescript
-import { createWorkflowGraph } from './workflow/graph';
+import { createWorkflowGraph } from './workflow/workflow';
 import { VisionProcessor } from './vision/vision-processor';
 import { TransactionCategorizer } from './categorizer/categorizer';
 import { DatabaseClient } from './database/database';

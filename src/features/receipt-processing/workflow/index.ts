@@ -9,6 +9,7 @@ export {
   NODE_NAMES,
   isExtractionValid,
   shouldRequestClarification 
-} from './graph';
+} from './workflow';
+export { WorkflowOrchestrator } from './workflow-orchestrator';
 export * from './nodes';
 export * from './error-handler';

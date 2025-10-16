@@ -2,10 +2,10 @@ import { config, validateConfig } from './core/config';
 import { DatabaseClient } from './core/database/database';
 import { VisionProcessor } from './features/receipt-processing/vision/vision-processor';
 import { TransactionCategorizer } from './features/receipt-processing/categorizer/categorizer';
-import { TelegramBotHandler } from './features/telegram-bot/telegram-bot';
-import { PendingWorkflow } from './features/telegram-bot/workflow-state-manager';
-import { WorkflowState } from './features/receipt-processing/workflow/types';
-import { createWorkflowGraph } from './features/receipt-processing/workflow/graph';
+import { createWorkflowGraph } from './features/receipt-processing/workflow';
+import { WorkflowOrchestrator } from './features/receipt-processing/workflow/workflow-orchestrator';
+import { TelegramAdapter } from './core/messaging/telegram-adapter';
+import { MessagingAdapter } from './core/messaging/messaging-adapter';
 import { logger } from './core/utils/logger';
 import { MemoryMonitor } from './core/utils/memory-monitor';
 
@@ -16,7 +16,8 @@ class ReceiptTrackerAgent {
   private database!: DatabaseClient;
   private visionProcessor!: VisionProcessor;
   private categorizer!: TransactionCategorizer;
-  private telegramBot!: TelegramBotHandler;
+  private messagingAdapter!: MessagingAdapter;
+  private orchestrator!: WorkflowOrchestrator;
   private workflowGraph!: ReturnType<typeof createWorkflowGraph>;
   private config!: any;
   private memoryMonitor!: MemoryMonitor;
@@ -85,16 +86,30 @@ class ReceiptTrackerAgent {
       });
       logger.info('✅ Workflow graph initialized');
 
-      // Initialize TelegramBotHandler
-      logger.info('🤖 Initializing Telegram bot...');
-      this.telegramBot = new TelegramBotHandler({
+      // Initialize WorkflowOrchestrator
+      logger.info('🔄 Initializing workflow orchestrator...');
+      this.orchestrator = new WorkflowOrchestrator(
+        this.workflowGraph,
+        this.database,
+        this.categorizer,
+        config
+      );
+      logger.info('✅ Workflow orchestrator initialized');
+
+      // Initialize TelegramAdapter
+      logger.info('🤖 Initializing Telegram adapter...');
+      this.messagingAdapter = new TelegramAdapter({
         botToken: config.telegram.botToken,
-        database: this.database,
-        onPhotoReceived: this.handlePhotoReceived.bind(this),
-        onCategorySelected: this.handleCategorySelected.bind(this),
-        onUserTextInput: this.handleUserTextInput.bind(this),
+        callbacks: {
+          onImageReceived: this.orchestrator.handleImageReceived.bind(this.orchestrator),
+          onTextReceived: this.orchestrator.handleTextReceived.bind(this.orchestrator),
+          onOptionSelected: this.orchestrator.handleOptionSelected.bind(this.orchestrator),
+        }
       });
-      logger.info('✅ Telegram bot initialized');
+
+      // Inject adapter into orchestrator
+      this.orchestrator.setAdapter(this.messagingAdapter);
+      logger.info('✅ Telegram adapter initialized');
 
       // Initialize Memory Monitor (check every 30 seconds by default)
       const monitorInterval = config.monitoring?.memoryIntervalMs || 30000;
@@ -110,470 +125,8 @@ class ReceiptTrackerAgent {
   }
 
   /**
-   * Handle photo received from Telegram bot
-   * Executes the workflow graph to process the receipt
-   * @param state - Initial workflow state with image data
-   */
-  private async handlePhotoReceived(state: WorkflowState): Promise<void> {
-    const operationId = `photo_${state.telegramUserId}_${Date.now()}`;
-
-    try {
-      // Log image received
-      if (state.imageData) {
-        logger.logImageReceived(state.telegramUserId, state.imageData.length);
-      }
-
-      // Start performance tracking
-      logger.startPerformanceTracking(operationId, 'process_photo', {
-        userId: state.telegramUserId,
-      });
-
-      logger.info(`📸 Processing photo for user ${state.telegramUserId}...`);
-
-      // Execute the workflow graph
-      logger.debug('Invoking workflow graph', {
-        userId: state.telegramUserId,
-        hasImageData: !!state.imageData,
-        imageSize: state.imageData?.length,
-      });
-
-      const result = await this.workflowGraph.invoke(state);
-
-      logger.info('📊 Workflow execution completed', {
-        userId: state.telegramUserId,
-        hasError: !!result.error,
-        errorType: result.errorType,
-        extractionValid: result.extractionValid,
-        needsClarification: result.needsClarification,
-        hasExtractedData: !!result.extractedData,
-        hasCategory: !!result.category,
-        hasTransactionId: !!result.transactionId,
-        extractedData: result.extractedData ? {
-          merchant: result.extractedData.merchantName,
-          amount: result.extractedData.amount,
-          currency: result.extractedData.currency,
-          confidence: result.extractedData.confidence,
-        } : null,
-      });
-
-      // Handle workflow result
-      if (result.error) {
-        logger.error(`❌ Workflow error for user ${state.telegramUserId}`, undefined, {
-          errorType: result.errorType,
-          errorMessage: result.error,
-          userId: state.telegramUserId,
-          // Log full workflow state for debugging
-          fullWorkflowResult: {
-            error: result.error,
-            errorType: result.errorType,
-            extractionValid: result.extractionValid,
-            needsClarification: result.needsClarification,
-            hasExtractedData: !!result.extractedData,
-            extractedData: result.extractedData,
-            hasCategory: !!result.category,
-            category: result.category,
-            confidence: result.confidence,
-            hasTransactionId: !!result.transactionId,
-            transactionId: result.transactionId,
-            awaitingUserInput: result.awaitingUserInput,
-          },
-        });
-
-        // End performance tracking with failure
-        logger.endPerformanceTracking(operationId, false, result.error);
-
-        // Interactive error recovery based on error type
-        if (result.errorType === 'validation' && result.extractedData) {
-          // Check what's invalid
-          if (result.extractedData.merchantName === 'Unknown Merchant' || !result.extractedData.merchantName) {
-            await this.telegramBot.requestMerchantCorrection(
-              state.chatId,
-              state,
-              result.extractedData
-            );
-            return;
-          } else if (result.extractedData.amount === 0 || !result.extractedData.amount) {
-            await this.telegramBot.requestAmountCorrection(
-              state.chatId,
-              state,
-              result.extractedData
-            );
-            return;
-          }
-        } else if (result.errorType === 'extraction') {
-          // Extraction failed, ask user for guidance
-          await this.telegramBot.requestRetryWithGuidance(
-            state.chatId,
-            state,
-            result.error
-          );
-          return;
-        }
-
-        // For other errors, send standard error message
-        await this.telegramBot.sendErrorMessage(
-          state.chatId,
-          result.error,
-          result.errorType
-        );
-        return;
-      }
-
-      // Log extraction results
-      if (result.extractedData) {
-        logger.logExtractionComplete(
-          state.telegramUserId,
-          true,
-          result.extractedData.confidence,
-          result.extractedData.merchantName
-        );
-      }
-
-      // Check if clarification is needed
-      if (result.needsClarification && result.extractedData) {
-        logger.info(`🤔 Requesting clarification for user ${state.telegramUserId}...`, {
-          category: result.category,
-          confidence: result.confidence,
-        });
-
-        // Log categorization
-        if (result.category && result.confidence !== undefined) {
-          logger.logCategorization(
-            state.telegramUserId,
-            result.category,
-            result.confidence,
-            true
-          );
-        }
-
-        // Send category options to user
-        await this.telegramBot.sendCategoryOptions(
-          state.chatId,
-          result.extractedData,
-          result.suggestedCategories,
-          result.transactionId
-        );
-
-        // End performance tracking
-        logger.endPerformanceTracking(operationId, true, undefined, {
-          needsClarification: true,
-        });
-        return;
-      }
-
-      // Send confirmation if transaction was stored successfully
-      if (result.transactionId && result.extractedData && result.category) {
-        // Log categorization
-        if (result.confidence !== undefined) {
-          logger.logCategorization(
-            state.telegramUserId,
-            result.category,
-            result.confidence,
-            false
-          );
-        }
-
-        // Log storage
-        logger.logStorage(
-          state.telegramUserId,
-          result.transactionId,
-          result.extractedData.amount,
-          result.category
-        );
-
-        logger.info(`✅ Transaction stored for user ${state.telegramUserId}: ${result.transactionId}`);
-
-        await this.telegramBot.sendConfirmation(
-          state.chatId,
-          result.extractedData,
-          result.category,
-          result.transactionId
-        );
-
-        // End performance tracking with success
-        logger.endPerformanceTracking(operationId, true, undefined, {
-          transactionId: result.transactionId,
-        });
-      }
-    } catch (error) {
-      logger.error('❌ Error handling photo', error, {
-        userId: state.telegramUserId,
-      });
-
-      // End performance tracking with failure
-      logger.endPerformanceTracking(operationId, false, (error as Error).message);
-
-      // Send generic error message to user
-      await this.telegramBot.sendErrorMessage(
-        state.chatId,
-        'An unexpected error occurred while processing your photo.',
-        'unknown'
-      );
-    }
-  }
-
-  /**
-   * Handle category selected by user
-   * Updates the transaction and sends confirmation
-   * @param userId - The user ID
-   * @param transactionId - The transaction ID to update
-   * @param category - The selected category
-   */
-  private async handleCategorySelected(
-    userId: string,
-    transactionId: string,
-    category: string
-  ): Promise<void> {
-    try {
-      logger.logUserInteraction(userId, 'category_selected', {
-        transactionId,
-        category,
-      });
-
-      logger.info(`📁 User ${userId} selected category "${category}" for transaction ${transactionId}`);
-
-      // Update the transaction category and learn from correction
-      await this.categorizer.learnFromCorrection(transactionId, category);
-
-      // Fetch the updated transaction to send confirmation
-      const transactions = await this.database.getUserTransactions(userId, 1);
-
-      if (transactions.length > 0 && transactions[0].id === transactionId) {
-        // Category updated successfully
-        logger.info(`✅ Category updated successfully for transaction ${transactionId}`);
-      }
-    } catch (error) {
-      logger.error('❌ Error handling category selection', error, {
-        userId,
-        transactionId,
-        category,
-      });
-    }
-  }
-
-  /**
-   * Handle user text input for pending workflows
-   * Processes user corrections and retries
-   * @param userId - The user ID
-   * @param chatId - The chat ID
-   * @param text - The user's text input
-   * @param pendingWorkflow - The pending workflow context
-   */
-  private async handleUserTextInput(
-    userId: string,
-    chatId: number,
-    text: string,
-    pendingWorkflow: PendingWorkflow
-  ): Promise<void> {
-    try {
-      logger.info('Processing user text input', {
-        userId,
-        workflowType: pendingWorkflow.type,
-        textPreview: text.substring(0, 50),
-      });
-
-      switch (pendingWorkflow.type) {
-        case 'merchant_correction':
-          await this.handleMerchantCorrection(userId, chatId, text, pendingWorkflow);
-          break;
-
-        case 'amount_correction':
-          await this.handleAmountCorrection(userId, chatId, text, pendingWorkflow);
-          break;
-
-        case 'retry_extraction':
-          await this.handleRetryExtraction(userId, chatId, text, pendingWorkflow);
-          break;
-
-        default:
-          await this.telegramBot.sendSimpleError(chatId, 'Unknown workflow type. Please send a new receipt.');
-          this.telegramBot.getWorkflowStateManager().clearPending(userId);
-      }
-    } catch (error) {
-      logger.error('Error handling user text input', error as Error, { userId });
-      await this.telegramBot.sendSimpleError(chatId, 'Failed to process your input. Please try again.');
-    }
-  }
-
-  /**
-   * Handle merchant name correction
-   */
-  private async handleMerchantCorrection(
-    userId: string,
-    chatId: number,
-    merchantName: string,
-    pendingWorkflow: PendingWorkflow
-  ): Promise<void> {
-    try {
-      if (!pendingWorkflow.extractedData) {
-        throw new Error('No extracted data in pending workflow');
-      }
-
-      // Update the merchant name
-      pendingWorkflow.extractedData.merchantName = merchantName.trim();
-
-      await this.telegramBot.sendSimpleError(chatId, `✅ Merchant updated to: ${merchantName}\n\n🔄 Categorizing transaction...`);
-
-      // Clear pending workflow
-      this.telegramBot.getWorkflowStateManager().clearPending(userId);
-
-      // Continue with categorization
-      const categorizationResult = await this.categorizer.categorize(
-        pendingWorkflow.extractedData,
-        userId
-      );
-
-      logger.info('Transaction categorized after merchant correction', {
-        userId,
-        category: categorizationResult.category,
-        confidence: categorizationResult.confidence,
-        reasoning: categorizationResult.reasoning,
-      });
-
-      // Check if clarification is needed
-      if (categorizationResult.confidence < this.config.categorization.confidenceThreshold) {
-        await this.telegramBot.sendCategoryOptions(
-          chatId,
-          pendingWorkflow.extractedData,
-          categorizationResult.suggestedCategories
-        );
-      } else {
-        // Store transaction
-        const transactionId = await this.database.storeTransaction({
-          user_id: userId,
-          telegram_user_id: userId,
-          amount: pendingWorkflow.extractedData.amount,
-          currency: pendingWorkflow.extractedData.currency,
-          merchant_name: pendingWorkflow.extractedData.merchantName,
-          category: categorizationResult.category,
-          date_time: pendingWorkflow.extractedData.dateTime,
-          payment_method: pendingWorkflow.extractedData.paymentMethod,
-          transaction_reference: pendingWorkflow.extractedData.transactionReference,
-          confidence_score: categorizationResult.confidence,
-        });
-
-        await this.telegramBot.sendConfirmation(
-          chatId,
-          pendingWorkflow.extractedData,
-          categorizationResult.category,
-          transactionId
-        );
-      }
-    } catch (error) {
-      logger.error('Error handling merchant correction', error as Error, { userId });
-      await this.telegramBot.sendSimpleError(chatId, 'Failed to process merchant correction. Please try again.');
-    }
-  }
-
-  /**
-   * Handle amount correction
-   */
-  private async handleAmountCorrection(
-    userId: string,
-    chatId: number,
-    amountText: string,
-    pendingWorkflow: PendingWorkflow
-  ): Promise<void> {
-    try {
-      if (!pendingWorkflow.extractedData) {
-        throw new Error('No extracted data in pending workflow');
-      }
-
-      // Parse the amount
-      const amount = parseFloat(amountText.replace(/[^0-9.]/g, ''));
-
-      if (isNaN(amount) || amount <= 0) {
-        await this.telegramBot.sendSimpleError(
-          chatId,
-          '❌ Invalid amount. Please enter a valid number (e.g., "16.50").'
-        );
-        return;
-      }
-
-      // Update the amount
-      pendingWorkflow.extractedData.amount = amount;
-
-      await this.telegramBot.sendSimpleError(chatId, `✅ Amount updated to: ${pendingWorkflow.extractedData.currency} ${amount.toFixed(2)}\n\n🔄 Categorizing transaction...`);
-
-      // Clear pending workflow
-      this.telegramBot.getWorkflowStateManager().clearPending(userId);
-
-      // Continue with categorization
-      const categorizationResult = await this.categorizer.categorize(
-        pendingWorkflow.extractedData,
-        userId
-      );
-
-      // Check if clarification is needed
-      if (categorizationResult.confidence < this.config.categorization.confidenceThreshold) {
-        await this.telegramBot.sendCategoryOptions(
-          chatId,
-          pendingWorkflow.extractedData,
-          categorizationResult.suggestedCategories
-        );
-      } else {
-        // Store transaction
-        const transactionId = await this.database.storeTransaction({
-          user_id: userId,
-          telegram_user_id: userId,
-          amount: pendingWorkflow.extractedData.amount,
-          currency: pendingWorkflow.extractedData.currency,
-          merchant_name: pendingWorkflow.extractedData.merchantName,
-          category: categorizationResult.category,
-          date_time: pendingWorkflow.extractedData.dateTime,
-          payment_method: pendingWorkflow.extractedData.paymentMethod,
-          transaction_reference: pendingWorkflow.extractedData.transactionReference,
-          confidence_score: categorizationResult.confidence,
-        });
-
-        await this.telegramBot.sendConfirmation(
-          chatId,
-          pendingWorkflow.extractedData,
-          categorizationResult.category,
-          transactionId
-        );
-      }
-    } catch (error) {
-      logger.error('Error handling amount correction', error as Error, { userId });
-      await this.telegramBot.sendSimpleError(chatId, 'Failed to process amount correction. Please try again.');
-    }
-  }
-
-  /**
-   * Handle retry extraction with user guidance
-   */
-  private async handleRetryExtraction(
-    userId: string,
-    chatId: number,
-    text: string,
-    pendingWorkflow: PendingWorkflow
-  ): Promise<void> {
-    try {
-      // User is providing merchant name manually
-      await this.telegramBot.sendSimpleError(chatId, `✅ Got it! Merchant: ${text}\n\n📝 Now please reply with the amount (e.g., "16.50")`);
-
-      // Update workflow to wait for amount
-      pendingWorkflow.type = 'amount_correction';
-      pendingWorkflow.extractedData = {
-        merchantName: text.trim(),
-        amount: 0,
-        currency: 'MYR',
-        dateTime: new Date().toISOString(),
-        paymentMethod: 'Unknown',
-        confidence: 0.5,
-      };
-      pendingWorkflow.timestamp = Date.now();
-
-      this.telegramBot.getWorkflowStateManager().setPending(userId, pendingWorkflow);
-    } catch (error) {
-      logger.error('Error handling retry extraction', error as Error, { userId });
-      await this.telegramBot.sendSimpleError(chatId, 'Failed to process your input. Please try again.');
-    }
-  }
-
-  /**
    * Start the application
-   * Launches the Telegram bot and begins processing messages
+   * Launches the messaging adapter and begins processing messages
    */
   async start(): Promise<void> {
     try {
@@ -582,8 +135,8 @@ class ReceiptTrackerAgent {
       // Start memory monitoring
       this.memoryMonitor.start();
 
-      // Launch the Telegram bot
-      await this.telegramBot.launch();
+      // Start the messaging adapter
+      await this.messagingAdapter.start();
 
       logger.info('✅ Receipt Tracker Agent is running!');
       logger.info('📱 Send receipts to your Telegram bot to start tracking expenses.');
@@ -606,8 +159,8 @@ class ReceiptTrackerAgent {
       // Stop memory monitoring
       this.memoryMonitor.stop();
 
-      // Stop the Telegram bot
-      await this.telegramBot.stop(signal);
+      // Stop the messaging adapter
+      await this.messagingAdapter.stop(signal);
 
       logger.info('✅ Receipt Tracker Agent stopped successfully');
     } catch (error) {
@@ -615,6 +168,8 @@ class ReceiptTrackerAgent {
       throw error;
     }
   }
+
+
 }
 
 /**

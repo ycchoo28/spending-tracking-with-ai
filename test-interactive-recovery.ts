@@ -9,7 +9,7 @@ import { VisionProcessor } from './src/features/receipt-processing/vision/vision
 import { TransactionCategorizer } from './src/features/receipt-processing/categorizer/categorizer';
 import { TelegramBotHandler } from './src/features/telegram-bot/telegram-bot';
 import { WorkflowState } from './src/features/receipt-processing/workflow/types';
-import { createWorkflowGraph } from './src/features/receipt-processing/workflow/graph';
+import { createWorkflowGraph } from './src/features/receipt-processing/workflow/workflow';
 import { logger } from './src/core/utils/logger';
 import { validateConfig, config as appConfig } from './src/core/config';
 
