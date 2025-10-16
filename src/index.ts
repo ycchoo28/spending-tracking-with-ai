@@ -19,7 +19,7 @@ class ReceiptTrackerAgent {
   private messagingAdapter!: MessagingAdapter;
   private orchestrator!: WorkflowOrchestrator;
   private workflowGraph!: ReturnType<typeof createWorkflowGraph>;
-  private config!: any;
+
   private memoryMonitor!: MemoryMonitor;
 
   /**
@@ -33,7 +33,6 @@ class ReceiptTrackerAgent {
       // Load and validate configuration
       logger.info('📋 Loading configuration...');
       validateConfig();
-      this.config = config;
       logger.info('✅ Configuration loaded successfully', {
         confidenceThreshold: config.workflow.confidenceThreshold,
       });
