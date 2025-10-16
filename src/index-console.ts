@@ -20,7 +20,7 @@ class ConsoleReceiptTrackerAgent {
     private orchestrator!: WorkflowOrchestrator;
     private workflowGraph!: ReturnType<typeof createWorkflowGraph>;
     private config!: any;
-    private memoryMonitor!: MemoryMonitor;
+    private memoryMonitor?: MemoryMonitor;
 
     async initialize(): Promise<void> {
         try {
@@ -80,7 +80,11 @@ class ConsoleReceiptTrackerAgent {
 
             this.orchestrator.setAdapter(this.messagingAdapter);
 
-            this.memoryMonitor = new MemoryMonitor(30000);
+            // Initialize Memory Monitor (use config or default to 30 seconds, 0 to disable)
+            const monitorInterval = this.config.monitoring?.memoryIntervalMs || 30000;
+            if (monitorInterval > 0) {
+                this.memoryMonitor = new MemoryMonitor(monitorInterval);
+            }
 
             logger.info('✨ Console Receipt Tracker Agent initialized successfully!');
         } catch (error) {
@@ -93,7 +97,10 @@ class ConsoleReceiptTrackerAgent {
         try {
             logger.info('🚀 Starting Console Receipt Tracker Agent...');
 
-            this.memoryMonitor.start();
+            // Start memory monitoring (if enabled)
+            if (this.memoryMonitor) {
+                this.memoryMonitor.start();
+            }
             await this.messagingAdapter.start();
 
             logger.info('✅ Console Receipt Tracker Agent is running!');
@@ -108,7 +115,10 @@ class ConsoleReceiptTrackerAgent {
         logger.info(`\n🛑 Shutting down Console Receipt Tracker Agent... (${signal || 'manual'})`);
 
         try {
-            this.memoryMonitor.stop();
+            // Stop memory monitoring (if enabled)
+            if (this.memoryMonitor) {
+                this.memoryMonitor.stop();
+            }
             await this.messagingAdapter.stop(signal);
             logger.info('✅ Console Receipt Tracker Agent stopped successfully');
         } catch (error) {

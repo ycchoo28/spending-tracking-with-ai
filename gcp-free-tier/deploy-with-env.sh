@@ -170,6 +170,8 @@ MAX_RETRIES=${MAX_RETRIES:-3}
 RETRY_DELAY=${RETRY_DELAY:-2000}
 LOG_LEVEL=info
 NODE_ENV=production
+
+# Memory Monitoring (30000ms = 30 seconds, set to 0 to disable)
 MEMORY_MONITOR_INTERVAL_MS=${MEMORY_MONITOR_INTERVAL_MS:-30000}
 
 # LangSmith Tracing (Optional)

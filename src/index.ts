@@ -20,7 +20,7 @@ class ReceiptTrackerAgent {
   private orchestrator!: WorkflowOrchestrator;
   private workflowGraph!: ReturnType<typeof createWorkflowGraph>;
 
-  private memoryMonitor!: MemoryMonitor;
+  private memoryMonitor?: MemoryMonitor;
 
   /**
    * Initialize the Receipt Tracker Agent
@@ -110,9 +110,11 @@ class ReceiptTrackerAgent {
       this.orchestrator.setAdapter(this.messagingAdapter);
       logger.info('✅ Telegram adapter initialized');
 
-      // Initialize Memory Monitor (check every 30 seconds by default)
+      // Initialize Memory Monitor (check every 30 seconds by default, 0 to disable)
       const monitorInterval = config.monitoring?.memoryIntervalMs || 30000;
-      this.memoryMonitor = new MemoryMonitor(monitorInterval);
+      if (monitorInterval > 0) {
+        this.memoryMonitor = new MemoryMonitor(monitorInterval);
+      }
 
       logger.info('✨ Receipt Tracker Agent initialized successfully!');
     } catch (error) {
@@ -131,8 +133,10 @@ class ReceiptTrackerAgent {
     try {
       logger.info('🚀 Starting Receipt Tracker Agent...');
 
-      // Start memory monitoring
-      this.memoryMonitor.start();
+      // Start memory monitoring (if enabled)
+      if (this.memoryMonitor) {
+        this.memoryMonitor.start();
+      }
 
       // Start the messaging adapter
       await this.messagingAdapter.start();
@@ -155,8 +159,10 @@ class ReceiptTrackerAgent {
     logger.info(`\n🛑 Shutting down Receipt Tracker Agent... (${signal || 'manual'})`);
 
     try {
-      // Stop memory monitoring
-      this.memoryMonitor.stop();
+      // Stop memory monitoring (if enabled)
+      if (this.memoryMonitor) {
+        this.memoryMonitor.stop();
+      }
 
       // Stop the messaging adapter
       await this.messagingAdapter.stop(signal);
