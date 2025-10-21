@@ -16,7 +16,12 @@
     "test:recovery:merchant": "ts-node test-interactive-recovery.ts unknown_merchant",
     "test:recovery:amount": "ts-node test-interactive-recovery.ts zero_amount",
     "test:recovery:extraction": "ts-node test-interactive-recovery.ts extraction_failure",
-    "setup-db": "ts-node setup-database.ts"
+    "setup-db": "ts-node setup-database.ts",
+    "test:local-db": "ts-node test-local-db.ts",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:status": "supabase status"
   },
   "keywords": [
     "telegram",
