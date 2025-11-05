@@ -13,8 +13,7 @@ import {
   invokeTransactionAgentNode,
   handleGeneralNode,
   handleCommandNode,
-  updateHistoryNode,
-  checkContinuationNode
+  updateHistoryNode
 } from './nodes';
 import { ChatOpenAI } from '@langchain/openai';
 
@@ -35,13 +34,12 @@ export function createMainAgent(config?: {
     lastActivityAt: Annotation<string>,
     conversationHistory: Annotation<any[]>,
     currentUserMessage: Annotation<string>,
-    injectedContext: Annotation<string[]>,
+    currentImageData: Annotation<Buffer | null>,
     currentIntent: Annotation<string | null>,
     activeSubAgent: Annotation<string | null>,
     subAgentState: Annotation<any>,
     subAgentThreadId: Annotation<string | null>,
-    responseMessage: Annotation<string>,
-    shouldContinue: Annotation<boolean>
+    responseMessage: Annotation<string>
   });
 
   // Create the graph
@@ -57,18 +55,25 @@ export function createMainAgent(config?: {
     .addNode('invoke_transaction_agent', async (state: ConversationState) =>
       invokeTransactionAgentNode(state, { transactionAgent: config?.transactionAgent })
     )
-    .addNode('update_history', updateHistoryNode)
-    .addNode('check_continuation', checkContinuationNode);
+    .addNode('update_history', updateHistoryNode);
 
   // Add edges
   workflow.addEdge('__start__', 'analyze_intent');
 
-  // Conditional routing based on intent
+  // Conditional routing based on intent and active sub-agent
   workflow.addConditionalEdges(
     'analyze_intent',
-    (state: any) => state.currentIntent || 'general',
+    (state: any) => {
+      // If there's already an active transaction sub-agent, continue with it
+      if (state.activeSubAgent === 'transaction') {
+        return 'continue_transaction';
+      }
+      // Otherwise, route based on intent
+      return state.currentIntent || 'general';
+    },
     {
       'transaction': 'route_to_transaction',
+      'continue_transaction': 'invoke_transaction_agent',
       'general': 'handle_general',
       'command': 'handle_command'
     }
@@ -78,17 +83,7 @@ export function createMainAgent(config?: {
   workflow.addEdge('invoke_transaction_agent', 'update_history');
   workflow.addEdge('handle_general', 'update_history');
   workflow.addEdge('handle_command', 'update_history');
-  workflow.addEdge('update_history', 'check_continuation');
-
-  // Conditional continuation
-  workflow.addConditionalEdges(
-    'check_continuation',
-    (state: any) => state.shouldContinue ? 'continue' : 'end',
-    {
-      'continue': 'analyze_intent',
-      'end': '__end__'
-    }
-  );
+  workflow.addEdge('update_history', '__end__');
 
   // Compile the graph
   const compiledGraph = workflow.compile({

@@ -97,8 +97,22 @@ export function createTransactionAgent(config?: {
     }
   );
 
-  // Loop back to validation after categorization
-  workflow.addEdge('categorize', 'validate_fields');
+  // After categorization, check if we need to request category or can proceed to store
+  workflow.addConditionalEdges(
+    'categorize',
+    (state: TransactionAgentState) => {
+      // If categorize node set nextAction to request_category, respect that
+      if (state.nextAction === 'request_category') {
+        return 'request_category';
+      }
+      // Otherwise, go back to validation to check if we can store
+      return 'validate_fields';
+    },
+    {
+      'request_category': 'request_category',
+      'validate_fields': 'validate_fields'
+    }
+  );
 
   // End edges for completion and waiting states
   workflow.addEdge('request_merchant', '__end__');

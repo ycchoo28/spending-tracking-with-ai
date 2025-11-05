@@ -13,7 +13,8 @@
         "apply_migration",
         "search_docs",
         "list_migrations",
-        "execute_sql"
+        "execute_sql",
+        "get_logs"
       ]
     }
   }

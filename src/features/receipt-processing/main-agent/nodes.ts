@@ -19,12 +19,6 @@ export async function analyzeIntentNode(
     temperature: 0.7
   });
 
-  // Combine current message with any injected context
-  const allContext = [
-    state.currentUserMessage,
-    ...(state.injectedContext || [])
-  ].filter(Boolean).join('\n');
-
   // Get recent conversation history
   const recentHistory = (state.conversationHistory || [])
     .slice(-5)
@@ -37,7 +31,7 @@ Conversation history (last 5 messages):
 ${recentHistory || 'No previous messages'}
 
 Current user input:
-${allContext}
+${state.currentUserMessage}
 
 Classify the intent as ONE of:
 - transaction: User wants to process a receipt/transaction (has image or mentions transaction)
@@ -60,15 +54,13 @@ Respond with ONLY the intent name (transaction, general, or command).`;
 
     return {
       currentIntent: finalIntent,
-      lastActivityAt: new Date().toISOString(),
-      injectedContext: [] // Clear after processing
+      lastActivityAt: new Date().toISOString()
     };
   } catch (error) {
     console.error('Error analyzing intent:', error);
     return {
       currentIntent: 'general',
-      lastActivityAt: new Date().toISOString(),
-      injectedContext: []
+      lastActivityAt: new Date().toISOString()
     };
   }
 }
@@ -79,9 +71,8 @@ Respond with ONLY the intent name (transaction, general, or command).`;
 export async function routeToTransactionNode(
   state: ConversationState
 ): Promise<Partial<ConversationState>> {
-  // Extract image data if present in current message
-  const hasImage = state.currentUserMessage.includes('[IMAGE]');
-  const imageData = hasImage ? extractImageData(state.currentUserMessage) : null;
+  // Use the image data from state
+  const imageData = state.currentImageData;
   
   // Extract text content (remove image markers)
   const textContent = state.currentUserMessage.replace(/\[IMAGE\]/g, '').trim();
@@ -97,7 +88,7 @@ export async function routeToTransactionNode(
       chatId: state.chatId,
       imageData,
       userProvidedContext: textContent,
-      extractedData: {},
+      extractedData: {}, // Empty object - extraction node will handle it
       validationStatus: {
         merchant: 'missing',
         amount: 'missing',
@@ -117,16 +108,6 @@ export async function routeToTransactionNode(
 }
 
 /**
- * Helper function to extract image data from message
- * (Placeholder - actual implementation depends on message format)
- */
-function extractImageData(_message: string): Buffer | null {
-  // This is a placeholder - actual implementation will depend on how images are passed
-  // For now, return null
-  return null;
-}
-
-/**
  * Invokes the transaction sub-agent
  */
 export async function invokeTransactionAgentNode(
@@ -141,8 +122,14 @@ export async function invokeTransactionAgentNode(
   }
 
   try {
+    // Update the sub-agent state with new user context
+    const updatedSubAgentState = {
+      ...state.subAgentState,
+      userProvidedContext: state.currentUserMessage.replace(/\[IMAGE\]/g, '').trim()
+    };
+
     const result = await config.transactionAgent.invoke(
-      state.subAgentState,
+      updatedSubAgentState,
       {
         configurable: { 
           thread_id: state.subAgentThreadId 
@@ -150,10 +137,14 @@ export async function invokeTransactionAgentNode(
       }
     );
 
+    // If transaction agent completed OR encountered an error, clear the active sub-agent
+    // Only keep it active if explicitly waiting for user input (not completed, no error)
+    const shouldKeepActive = !result.completed && !result.error;
+
     return {
       subAgentState: result,
       responseMessage: result.responseMessage || 'Processing complete',
-      activeSubAgent: result.completed ? null : 'transaction'
+      activeSubAgent: shouldKeepActive ? 'transaction' : null
     };
   } catch (error) {
     console.error('Error invoking transaction agent:', error);
@@ -176,11 +167,6 @@ export async function handleGeneralNode(
     temperature: 0.7
   });
 
-  const allContext = [
-    state.currentUserMessage,
-    ...(state.injectedContext || [])
-  ].filter(Boolean).join('\n');
-
   const recentHistory = (state.conversationHistory || [])
     .slice(-5)
     .map(m => `${m.role}: ${m.content}`)
@@ -191,7 +177,7 @@ export async function handleGeneralNode(
 Conversation history:
 ${recentHistory || 'No previous messages'}
 
-User: ${allContext}
+User: ${state.currentUserMessage}
 
 Provide a helpful, friendly response.`;
 
@@ -202,16 +188,12 @@ Provide a helpful, friendly response.`;
       : JSON.stringify(response.content);
 
     return {
-      responseMessage: content,
-      shouldContinue: false,
-      injectedContext: []
+      responseMessage: content
     };
   } catch (error) {
     console.error('Error in general conversation:', error);
     return {
-      responseMessage: 'I apologize, but I encountered an error. How else can I help you?',
-      shouldContinue: false,
-      injectedContext: []
+      responseMessage: 'I apologize, but I encountered an error. How else can I help you?'
     };
   }
 }
@@ -228,30 +210,26 @@ export async function handleCommandNode(
     return {
       responseMessage: '❌ Cancelled. How else can I help you?',
       activeSubAgent: null,
-      subAgentState: null,
-      shouldContinue: false
+      subAgentState: null
     };
   }
 
   if (command.includes('help')) {
     const helpMessage = getContextualHelp(state);
     return {
-      responseMessage: helpMessage,
-      shouldContinue: false
+      responseMessage: helpMessage
     };
   }
 
   if (command.includes('status')) {
     const statusMessage = getConversationStatus(state);
     return {
-      responseMessage: statusMessage,
-      shouldContinue: false
+      responseMessage: statusMessage
     };
   }
 
   return {
-    responseMessage: 'Unknown command. Try "help" for available commands.',
-    shouldContinue: false
+    responseMessage: 'Unknown command. Try "help" for available commands.'
   };
 }
 
@@ -284,20 +262,6 @@ export async function updateHistoryNode(
 
   return {
     conversationHistory: limitedHistory
-  };
-}
-
-/**
- * Checks if conversation should continue
- */
-export async function checkContinuationNode(
-  state: ConversationState
-): Promise<Partial<ConversationState>> {
-  // Continue if there's an active sub-agent
-  const shouldContinue = state.activeSubAgent !== null;
-
-  return {
-    shouldContinue
   };
 }
 

@@ -9,13 +9,27 @@ import { ChatOpenAI } from '@langchain/openai';
 
 /**
  * Extracts transaction data from image if needed
+ * Only extracts once - if data is missing after extraction, we request from user
  */
 export async function extractIfNeededNode(
   state: TransactionAgentState,
   config?: { visionProcessor?: any }
 ): Promise<Partial<TransactionAgentState>> {
+  // Check if we have extracted data already
+  // If extractedData has any of the key fields defined (even if empty), we've already extracted
+  const hasExtractedData = state.extractedData && 
+                          Object.keys(state.extractedData).length > 0 &&
+                          ('merchantName' in state.extractedData || 'amount' in state.extractedData);
+  
+  console.log('[extractIfNeededNode] State check:', {
+    hasImageData: !!state.imageData,
+    hasExtractedData,
+    extractedDataKeys: state.extractedData ? Object.keys(state.extractedData) : []
+  });
+
   // Only extract if we have image data and haven't extracted yet
-  if (state.imageData && !state.extractedData?.merchantName) {
+  if (state.imageData && !hasExtractedData) {
+    console.log('[extractIfNeededNode] Extracting from image...');
     try {
       if (!config?.visionProcessor) {
         throw new Error('Vision processor not configured');
@@ -25,12 +39,14 @@ export async function extractIfNeededNode(
         state.imageData
       );
 
+      console.log('[extractIfNeededNode] Extraction result:', extracted);
+
       return {
         extractedData: extracted,
         retryCount: 0
       };
     } catch (error) {
-      console.error('Extraction error:', error);
+      console.error('[extractIfNeededNode] Extraction error:', error);
       return {
         error: 'Failed to extract transaction data',
         extractedData: {
@@ -47,8 +63,9 @@ export async function extractIfNeededNode(
     }
   }
 
-  // Initialize empty extracted data if no image
-  if (!state.extractedData) {
+  // Initialize empty extracted data if no image and no data yet
+  if (!hasExtractedData) {
+    console.log('[extractIfNeededNode] No image, initializing empty data');
     return {
       extractedData: {
         merchantName: '',
@@ -63,6 +80,7 @@ export async function extractIfNeededNode(
     };
   }
 
+  console.log('[extractIfNeededNode] Using existing extracted data');
   return {};
 }
 
@@ -73,7 +91,10 @@ export async function applyUserContextNode(
   state: TransactionAgentState,
   config?: { llm?: ChatOpenAI }
 ): Promise<Partial<TransactionAgentState>> {
+  console.log('[applyUserContextNode] User context:', state.userProvidedContext);
+  
   if (!state.userProvidedContext || state.userProvidedContext.trim() === '') {
+    console.log('[applyUserContextNode] No user context, skipping');
     return {};
   }
 
@@ -103,7 +124,10 @@ Response: {"amount": 15.50}
 User: "Starbucks coffee for 15.50"
 Response: {"merchantName": "Starbucks", "amount": 15.50}
 
-Respond with ONLY valid JSON, no other text.`;
+User: "Here is my receipt" (no specific details)
+Response: {}
+
+Respond with ONLY valid JSON, no other text. If the user doesn't provide specific transaction details, return an empty object {}.`;
 
   try {
     const response = await llm.invoke(prompt);
@@ -111,16 +135,29 @@ Respond with ONLY valid JSON, no other text.`;
       ? response.content 
       : JSON.stringify(response.content);
     
+    console.log('[applyUserContextNode] LLM response:', content);
+    
     const updates = JSON.parse(content);
 
+    console.log('[applyUserContextNode] Parsed updates:', updates);
+
+    if (Object.keys(updates).length === 0) {
+      console.log('[applyUserContextNode] No updates from user context');
+      return {};
+    }
+
+    const updatedData = {
+      ...state.extractedData,
+      ...updates
+    };
+
+    console.log('[applyUserContextNode] Updated extracted data:', updatedData);
+
     return {
-      extractedData: {
-        ...state.extractedData,
-        ...updates
-      }
+      extractedData: updatedData
     };
   } catch (error) {
-    console.error('Error applying user context:', error);
+    console.error('[applyUserContextNode] Error applying user context:', error);
     return {};
   }
 }
@@ -154,80 +191,85 @@ export async function validateFieldsNode(
       : 'valid' as const
   };
 
+  console.log('[validateFieldsNode] Validation result:', {
+    merchant: `${data.merchantName} -> ${validationStatus.merchant}`,
+    amount: `${data.amount} -> ${validationStatus.amount}`,
+    category: `${data.category} -> ${validationStatus.category}`
+  });
+
   return { validationStatus };
 }
 
 /**
  * Agent decides next action based on current state
+ * Uses deterministic logic to ensure correct prioritization
  */
 export async function agentDecideActionNode(
   state: TransactionAgentState,
-  config?: { llm?: ChatOpenAI }
+  _config?: { llm?: ChatOpenAI }
 ): Promise<Partial<TransactionAgentState>> {
-  const llm = config?.llm || new ChatOpenAI({
-    modelName: 'gpt-4o-mini',
-    temperature: 0
+  console.log('[agentDecideActionNode] Current validation status:', state.validationStatus);
+  console.log('[agentDecideActionNode] Extracted data:', {
+    merchant: state.extractedData.merchantName,
+    amount: state.extractedData.amount,
+    category: state.extractedData.category
   });
 
-  const prompt = `You are processing a transaction. Analyze the current state and decide the SINGLE next action.
-
-Current transaction state:
-- Merchant: ${state.extractedData.merchantName || 'MISSING'} (${state.validationStatus.merchant})
-- Amount: ${state.extractedData.amount || 'MISSING'} (${state.validationStatus.amount})
-- Category: ${state.extractedData.category || 'MISSING'} (${state.validationStatus.category})
-- Extraction confidence: ${state.extractedData.confidence}
-
-Available actions:
-1. request_merchant - Ask user for merchant name
-2. request_amount - Ask user for amount
-3. request_category - Ask user to select category
-4. categorize - Automatically categorize the transaction
-5. store_transaction - Save transaction to database
-6. request_better_image - Ask for clearer photo
-
-Decision rules:
-- ALWAYS prioritize merchant and amount before category (they are critical)
-- If merchant is missing/invalid, choose request_merchant
-- If amount is missing/invalid, choose request_amount
-- If merchant and amount are valid but category is missing, choose categorize first
-- Only choose store_transaction if ALL fields are valid
-- Only choose request_better_image if extraction confidence < 0.3 and multiple fields are missing
-
-Think step by step:
-1. What fields are missing or invalid?
-2. Which field is most critical?
-3. Can I auto-categorize or do I need user input?
-4. Are all fields valid enough to store?
-
-Respond with ONLY the action name and a brief reason.
-Format: ACTION_NAME | reason`;
-
-  try {
-    const response = await llm.invoke(prompt);
-    const content = typeof response.content === 'string' 
-      ? response.content 
-      : JSON.stringify(response.content);
-    
-    const [action, reasoning] = content.split('|').map(s => s.trim());
-
+  // Deterministic decision logic - prioritize critical fields first
+  
+  // 1. Check if image quality is too low (multiple fields missing with low confidence)
+  const missingCount = Object.values(state.validationStatus).filter(v => v !== 'valid').length;
+  const confidence = state.extractedData.confidence || 0;
+  if (confidence < 0.3 && missingCount >= 2) {
+    console.log('[agentDecideActionNode] Decision: request_better_image (low confidence + multiple missing)');
     return {
-      nextAction: action,
-      agentReasoning: reasoning || 'No reasoning provided'
+      nextAction: 'request_better_image',
+      agentReasoning: 'Image quality too low, multiple fields missing'
     };
-  } catch (error) {
-    console.error('Error in agent decision:', error);
-    // Fallback logic
-    if (state.validationStatus.merchant !== 'valid') {
-      return { nextAction: 'request_merchant', agentReasoning: 'Merchant missing' };
-    }
-    if (state.validationStatus.amount !== 'valid') {
-      return { nextAction: 'request_amount', agentReasoning: 'Amount missing' };
-    }
-    if (state.validationStatus.category !== 'valid') {
-      return { nextAction: 'categorize', agentReasoning: 'Category missing' };
-    }
-    return { nextAction: 'store_transaction', agentReasoning: 'All fields valid' };
   }
+
+  // 2. Merchant is critical - request if missing/invalid
+  if (state.validationStatus.merchant !== 'valid') {
+    console.log('[agentDecideActionNode] Decision: request_merchant');
+    return {
+      nextAction: 'request_merchant',
+      agentReasoning: 'Merchant name is missing or invalid'
+    };
+  }
+
+  // 3. Amount is critical - request if missing/invalid
+  if (state.validationStatus.amount !== 'valid') {
+    console.log('[agentDecideActionNode] Decision: request_amount');
+    return {
+      nextAction: 'request_amount',
+      agentReasoning: 'Amount is missing or invalid'
+    };
+  }
+
+  // 4. Category handling - auto-categorize if missing, request if exists but needs confirmation
+  if (state.validationStatus.category !== 'valid') {
+    // If category already exists (from previous categorization), request user confirmation
+    if (state.extractedData.category && state.extractedData.category !== '') {
+      console.log('[agentDecideActionNode] Decision: request_category (needs confirmation)');
+      return {
+        nextAction: 'request_category',
+        agentReasoning: 'Category needs user confirmation'
+      };
+    }
+    // Otherwise, try auto-categorization
+    console.log('[agentDecideActionNode] Decision: categorize');
+    return {
+      nextAction: 'categorize',
+      agentReasoning: 'Auto-categorizing transaction'
+    };
+  }
+
+  // 5. All fields valid - store the transaction
+  console.log('[agentDecideActionNode] Decision: store_transaction (all valid)');
+  return {
+    nextAction: 'store_transaction',
+    agentReasoning: 'All fields validated, ready to store'
+  };
 }
 
 /**

@@ -6,14 +6,6 @@
  */
 
 import { ConversationState } from './main-agent/types';
-import { getCheckpointer } from '../../core/checkpointing';
-
-export interface AgentExecutionState {
-  userId: string;
-  isProcessing: boolean;
-  conversationId: string | null;
-  startedAt: Date;
-}
 
 export interface UserMessage {
   content: string;
@@ -22,7 +14,6 @@ export interface UserMessage {
 }
 
 export class ConversationOrchestrator {
-  private activeExecutions: Map<string, AgentExecutionState> = new Map();
   private mainAgent: any; // CompiledStateGraph type
 
   constructor(mainAgent: any) {
@@ -37,74 +28,13 @@ export class ConversationOrchestrator {
     chatId: number,
     message: UserMessage
   ): Promise<string> {
-    const execution = this.activeExecutions.get(userId);
-
-    // If agent is processing, inject context
-    if (execution && execution.isProcessing) {
-      await this.injectContext(userId, message.content);
-      return 'Context added to ongoing processing...';
-    }
-
-    // Start new execution
-    return this.startExecution(userId, chatId, message);
+    return this.executeAgent(userId, chatId, message);
   }
 
   /**
-   * Injects context into a running agent execution
+   * Executes the agent for a user message
    */
-  private async injectContext(userId: string, context: string): Promise<void> {
-    const execution = this.activeExecutions.get(userId);
-    if (!execution || !execution.conversationId) {
-      console.warn(`[Orchestrator] No active execution for user ${userId}`);
-      return;
-    }
-
-    const startTime = Date.now();
-    
-    try {
-      console.log(`[Orchestrator] Injecting context for user ${userId}, conversation ${execution.conversationId}`);
-      
-      const checkpointer = await getCheckpointer();
-      
-      // Load current checkpoint
-      const config = { configurable: { thread_id: execution.conversationId } };
-      const checkpoint = await checkpointer.get(config);
-      
-      if (!checkpoint) {
-        console.warn(`[Orchestrator] No checkpoint found for conversation ${execution.conversationId}`);
-        return;
-      }
-
-      // Add context to injectedContext array
-      const currentState = checkpoint.channel_values as any;
-      const updatedState = {
-        ...currentState,
-        injectedContext: [
-          ...(currentState.injectedContext || []),
-          context
-        ]
-      };
-
-      // Save updated checkpoint
-      const checkpointMetadata = checkpoint as any;
-      await checkpointer.put(config, checkpoint, {
-        ...checkpointMetadata.metadata,
-        injectedContext: updatedState.injectedContext
-      });
-
-      const duration = Date.now() - startTime;
-      console.log(`[Orchestrator] Context injected successfully for user ${userId} (${duration}ms)`);
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      console.error(`[Orchestrator] Error injecting context for user ${userId} (${duration}ms):`, error);
-      throw new Error(`Failed to inject context: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Starts a new agent execution
-   */
-  private async startExecution(
+  private async executeAgent(
     userId: string,
     chatId: number,
     message: UserMessage
@@ -117,16 +47,13 @@ export class ConversationOrchestrator {
     console.log(`[Orchestrator] Message: ${message.content.substring(0, 100)}${message.content.length > 100 ? '...' : ''}`);
     console.log(`[Orchestrator] Has image: ${!!message.imageData}`);
 
-    // Mark as processing
-    this.activeExecutions.set(userId, {
-      userId,
-      isProcessing: true,
-      conversationId,
-      startedAt: new Date()
-    });
-
     try {
       // Prepare initial state
+      // Add [IMAGE] marker if image data is present so intent analyzer knows
+      const messageWithImageMarker = message.imageData 
+        ? `[IMAGE] ${message.content}`.trim()
+        : message.content;
+
       const initialState: Partial<ConversationState> = {
         conversationId,
         userId,
@@ -134,14 +61,13 @@ export class ConversationOrchestrator {
         createdAt: new Date().toISOString(),
         lastActivityAt: new Date().toISOString(),
         conversationHistory: [],
-        currentUserMessage: message.content,
-        injectedContext: [],
+        currentUserMessage: messageWithImageMarker,
+        currentImageData: message.imageData || null,
         currentIntent: null,
         activeSubAgent: null,
         subAgentState: null,
         subAgentThreadId: null,
-        responseMessage: '',
-        shouldContinue: false
+        responseMessage: ''
       };
 
       console.log(`[Orchestrator] Invoking main agent...`);
@@ -166,36 +92,6 @@ export class ConversationOrchestrator {
       
       // Return user-friendly error message
       return '❌ An error occurred while processing your request. Please try again or contact support if the issue persists.';
-    } finally {
-      // Mark as not processing
-      const execution = this.activeExecutions.get(userId);
-      if (execution) {
-        execution.isProcessing = false;
-        const totalDuration = Date.now() - startTime;
-        console.log(`[Orchestrator] Execution state updated for user ${userId} (total: ${totalDuration}ms)`);
-      }
     }
-  }
-
-  /**
-   * Checks if an agent is currently processing for a user
-   */
-  isProcessing(userId: string): boolean {
-    const execution = this.activeExecutions.get(userId);
-    return execution?.isProcessing || false;
-  }
-
-  /**
-   * Gets the current execution state for a user
-   */
-  getExecutionState(userId: string): AgentExecutionState | undefined {
-    return this.activeExecutions.get(userId);
-  }
-
-  /**
-   * Clears execution state for a user
-   */
-  clearExecution(userId: string): void {
-    this.activeExecutions.delete(userId);
   }
 }

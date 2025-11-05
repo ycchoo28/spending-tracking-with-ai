@@ -9,15 +9,38 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 /**
+ * Get ModelScope text model based on profile
+ */
+function getModelScopeTextModel(): string {
+  const profile = process.env.MODELSCOPE_TEXT_MODEL_PROFILE || 'glm4';
+  
+  switch (profile.toLowerCase()) {
+    case 'qwen-coder':
+    case 'qwen_coder':
+    case 'coder':
+      return process.env.MODELSCOPE_TEXT_MODEL_QWEN_CODER || 'Qwen/Qwen3-Coder-480B-A35B-Instruct';
+    
+    case 'glm4':
+    case 'glm':
+    default:
+      return process.env.MODELSCOPE_TEXT_MODEL_GLM4 || 'ZhipuAI/GLM-4.6';
+  }
+}
+
+/**
  * Application configuration
  */
 export const config = {
-  // OpenAI/LLM Configuration
+  // ModelScope API Configuration
   openai: {
-    apiKey: process.env.OPENAI_API_KEY || '',
-    apiBase: process.env.OPENAI_API_BASE || 'https://api.openai.com/v1',
-    visionModel: process.env.OPENAI_VISION_MODEL || process.env.VISION_MODEL || 'gpt-4-vision-preview',
-    categorizerModel: process.env.OPENAI_TEXT_MODEL || process.env.CATEGORIZER_MODEL || 'gpt-4-turbo-preview',
+    provider: 'modelscope',
+    apiKey: process.env.MODELSCOPE_API_KEY || '',
+    apiBase: process.env.MODELSCOPE_API_BASE || 'https://api-inference.modelscope.cn/v1',
+    visionModel: process.env.MODELSCOPE_VISION_MODEL || 'Qwen/Qwen3-VL-235B-A22B-Instruct',
+    textModel: getModelScopeTextModel(),
+    textModelProfile: process.env.MODELSCOPE_TEXT_MODEL_PROFILE || 'glm4',
+    // Legacy support
+    categorizerModel: getModelScopeTextModel(),
   },
 
   // Telegram Configuration
@@ -61,8 +84,8 @@ export const config = {
     retryDelayMs: parseInt(process.env.AGENT_RETRY_DELAY_MS || '2000'),
     agentDecisionTimeoutMs: parseInt(process.env.AGENT_DECISION_TIMEOUT_MS || '30000'),
     
-    // LLM configuration
-    llmModel: process.env.AGENT_LLM_MODEL || 'gpt-4o-mini',
+    // LLM configuration - uses the same text model as categorizer
+    llmModel: process.env.AGENT_LLM_MODEL || getModelScopeTextModel(),
     llmTemperature: parseFloat(process.env.AGENT_LLM_TEMPERATURE || '0.7'),
     llmMaxTokens: parseInt(process.env.AGENT_LLM_MAX_TOKENS || '50000'),
     
@@ -93,6 +116,7 @@ export const config = {
  */
 export function validateConfig(): void {
   const env = process.env.NODE_ENV || 'development';
+  
   const telegramTokenKey = env === 'production' 
     ? 'TELEGRAM_BOT_TOKEN_PROD or TELEGRAM_BOT_TOKEN'
     : 'TELEGRAM_BOT_TOKEN_DEV or TELEGRAM_BOT_TOKEN';
@@ -104,7 +128,7 @@ export function validateConfig(): void {
     : 'SUPABASE_KEY_DEV or SUPABASE_KEY';
 
   const required = [
-    { key: 'OPENAI_API_KEY', value: config.openai.apiKey },
+    { key: 'MODELSCOPE_API_KEY', value: config.openai.apiKey },
     { key: telegramTokenKey, value: config.telegram.botToken },
     { key: supabaseUrlKey, value: config.database.url },
     { key: supabaseKeyKey, value: config.database.key },

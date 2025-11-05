@@ -26,7 +26,7 @@ export interface ConversationState {
   // Conversation content
   conversationHistory: ConversationMessage[];
   currentUserMessage: string;
-  injectedContext: string[];
+  currentImageData: Buffer | null; // Image data if present
   
   // Intent and routing
   currentIntent: 'transaction' | 'general' | 'command' | null;
@@ -38,5 +38,4 @@ export interface ConversationState {
   
   // Response
   responseMessage: string;
-  shouldContinue: boolean;
 }

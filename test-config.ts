@@ -14,10 +14,13 @@ try {
   // Display configuration
   console.log('📋 Configuration Values:');
   console.log('─────────────────────────────────────');
-  console.log('OpenAI API Key:', config.openai.apiKey ? '✓ Set' : '✗ Missing');
-  console.log('OpenAI API Base:', config.openai.apiBase);
+  console.log('Provider:', config.openai.provider.toUpperCase());
+  console.log('API Key:', config.openai.apiKey ? '✓ Set' : '✗ Missing');
+  console.log('API Base:', config.openai.apiBase);
+  console.log('─────────────────────────────────────');
   console.log('Vision Model:', config.openai.visionModel);
-  console.log('Categorizer Model:', config.openai.categorizerModel);
+  console.log('Text Model Profile:', config.openai.textModelProfile.toUpperCase());
+  console.log('Text Model:', config.openai.textModel);
   console.log('─────────────────────────────────────');
   console.log('Telegram Bot Token:', config.telegram.botToken ? '✓ Set' : '✗ Missing');
   console.log('─────────────────────────────────────');
@@ -28,9 +31,18 @@ try {
   console.log('Max Retries:', config.workflow.maxRetries);
   console.log('Retry Delay:', config.workflow.retryDelay, 'ms');
   console.log('─────────────────────────────────────');
+  console.log('v2 Agent Loop Configuration:');
+  console.log('Conversation Expiration:', config.agentLoop.conversationExpirationHours, 'hours');
+  console.log('Max Conversation History:', config.agentLoop.maxConversationHistory, 'messages');
+  console.log('Category Confidence Threshold:', config.agentLoop.categoryConfidenceThreshold);
+  console.log('Extraction Confidence Threshold:', config.agentLoop.extractionConfidenceThreshold);
+  console.log('Agent LLM Model:', config.agentLoop.llmModel);
+  console.log('Agent LLM Temperature:', config.agentLoop.llmTemperature);
+  console.log('─────────────────────────────────────');
   console.log('LangSmith Tracing:', config.langsmith.tracing ? '✓ Enabled' : '✗ Disabled');
   if (config.langsmith.tracing) {
     console.log('LangSmith Project:', config.langsmith.project);
+    console.log('LangSmith API Key:', config.langsmith.apiKey ? '✓ Set' : '✗ Missing');
   }
   console.log('─────────────────────────────────────\n');
 
