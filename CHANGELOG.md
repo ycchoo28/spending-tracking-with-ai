@@ -5,6 +5,23 @@ All notable changes to the Receipt Tracker Agent project will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2025-11-05
+
+### Fixed
+- **Critical**: Fixed state persistence in multi-turn conversations
+  - Orchestrator was overwriting `activeSubAgent`, `subAgentState`, and `subAgentThreadId` with null values on each turn
+  - This prevented LangGraph checkpointer from restoring previous state, breaking multi-turn flows
+  - Now only sets fields specific to current turn, allowing checkpointer to restore sub-agent state
+  - Multi-turn clarification flows (e.g., requesting merchant name) now work correctly
+- Removed dead code referencing `shouldContinue` flag (was already removed from types but still referenced in orchestrator)
+  - Conversation completion now determined solely by presence of `activeSubAgent`
+  - Simplified logic: if `activeSubAgent` exists → continue, if null → mark completed
+
+### Changed
+- Orchestrator `initialState` now only sets current-turn fields (`currentUserMessage`, `currentImageData`, etc.)
+- Removed `shouldContinue` logging and conditional checks
+- Cleaner conversation completion logic based on `activeSubAgent` presence
+
 ## [2.3.0] - 2025-11-05
 
 ### Fixed

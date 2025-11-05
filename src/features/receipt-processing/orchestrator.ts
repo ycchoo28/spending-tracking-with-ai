@@ -66,15 +66,10 @@ export class ConversationOrchestrator {
         conversationId,
         userId,
         chatId,
-        createdAt: new Date().toISOString(),
         lastActivityAt: new Date().toISOString(),
-        conversationHistory: [],
         currentUserMessage: messageWithImageMarker,
         currentImageData: message.imageData || null,
         currentIntent: null,
-        activeSubAgent: null,
-        subAgentState: null,
-        subAgentThreadId: null,
         responseMessage: ''
       };
 
@@ -92,15 +87,12 @@ export class ConversationOrchestrator {
       console.log(`[Orchestrator] Execution completed for user ${userId} (${duration}ms)`);
       console.log(`[Orchestrator] Response: ${result.responseMessage?.substring(0, 100)}${result.responseMessage && result.responseMessage.length > 100 ? '...' : ''}`);
       console.log(`[Orchestrator] Active sub-agent: ${result.activeSubAgent || 'none'}`);
-      console.log(`[Orchestrator] Should continue: ${result.shouldContinue}`);
 
       // Update active sub-agent tracking
       if (result.activeSubAgent) {
         await this.conversationManager.updateActiveSubAgent(conversationId, result.activeSubAgent);
-      }
-
-      // Mark conversation as completed if agent is done
-      if (!result.shouldContinue && !result.activeSubAgent) {
+      } else {
+        // No active sub-agent means conversation is complete
         await this.conversationManager.updateStatus(conversationId, 'completed');
         console.log(`[Orchestrator] Conversation ${conversationId} marked as completed`);
       }

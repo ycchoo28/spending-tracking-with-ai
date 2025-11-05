@@ -48,28 +48,29 @@ The Agent Loop v2 is a complete rewrite of the receipt processing system, transf
 ### Checkpointing & State Persistence
 
 **How it works:**
-1. **New Conversation**: Orchestrator generates unique `conversationId = conv_{userId}_{timestamp}`
+1. **New Conversation**: Orchestrator checks for active conversations for the user
+   - If none exist, generates unique `conversationId = conv_{userId}_{timestamp}`
+   - If active conversation exists, reuses the same `conversationId`
 2. **First Invocation**: Main agent invoked with `thread_id: conversationId`
    - LangGraph automatically saves state to checkpoint after execution
    - If `activeSubAgent: 'transaction'` is set, conversation continues
+   - Orchestrator only sets current-turn fields, allowing checkpointer to restore sub-agent state
 3. **Second Invocation**: User sends another message
-   - **Problem**: Orchestrator generates a NEW `conversationId` with new timestamp
-   - **Result**: Each invocation gets a different `thread_id`, so checkpoints are NOT reused
-   - Multi-turn conversations currently **do not work** as designed
+   - Orchestrator reuses same `conversationId` (same `thread_id`)
+   - LangGraph loads checkpoint from previous turn
+   - Main agent sees `activeSubAgent: 'transaction'` and routes to continue transaction
+   - Transaction agent loads its state and applies user's new input
+   - Multi-turn conversations work correctly ✅
 
-**Current Limitation:**
-- ⚠️ Checkpoints are created but never loaded (new thread_id each time)
-- ⚠️ Using `MemorySaver` (in-memory only, lost on restart)
-- ⚠️ Multi-turn flows work within a single invocation only
+**State Management:**
+- Orchestrator only sets fields specific to current turn (`currentUserMessage`, `currentImageData`, etc.)
+- Checkpointer restores `activeSubAgent`, `subAgentState`, `subAgentThreadId` from previous turn
+- This allows sub-agents to maintain state across multiple user messages
 
 **When Checkpoints Are Cleared:**
-- Never explicitly cleared (MemorySaver keeps them in memory until restart)
-- Conversation cleanup job cleans database records, but doesn't affect MemorySaver
-
-**To Fix Multi-Turn:**
-- Need to track `conversationId` per user (not generate new one each time)
-- Reuse same `thread_id` for subsequent messages from same user
-- Implement conversation session management
+- Conversation marked as 'completed' when `activeSubAgent` becomes null
+- Conversation cleanup job removes expired conversations (24 hours by default)
+- Checkpoints persist in PostgreSQL until conversation is cleaned up
 
 ### Adaptive Decision-Making
 - LLM-based decision node determines next action dynamically
@@ -147,7 +148,7 @@ The system is automatically initialized in `src/index.ts`. The messaging adapter
 9. User receives confirmation with transaction details
 10. Agent invocation ends (state saved to checkpoint)
 
-#### Clarification Path (Missing Merchant) - ⚠️ Currently Broken
+#### Clarification Path (Missing Merchant) - ✅ Working
 **Invocation 1:**
 1. User sends receipt image
 2. Main Agent analyzes intent → routes to Transaction Agent
@@ -157,22 +158,19 @@ The system is automatically initialized in `src/index.ts`. The messaging adapter
 6. User receives: "🏪 I couldn't identify the merchant name clearly. Could you tell me the merchant name?"
 7. Agent invocation ends (state saved to checkpoint with `activeSubAgent: 'transaction'`)
    - Checkpoint saved with `thread_id: conv_user123_1730000000000`
+   - Conversation remains 'active' in database
 
-**Invocation 2 (What Should Happen):**
+**Invocation 2:**
 8. User replies: "Starbucks"
-9. Main Agent loads checkpoint → sees `activeSubAgent: 'transaction'` → routes to Transaction Agent
-10. Transaction Agent loads its checkpoint → applies user context → merchant = "Starbucks"
-11. Agent validates again → all valid
-12. Agent categorizes and stores
-13. User receives confirmation
-
-**Invocation 2 (What Actually Happens):**
-8. User replies: "Starbucks"
-9. Orchestrator generates NEW `conversationId: conv_user123_1730000001000` (different timestamp)
-10. Main Agent invoked with NEW `thread_id` → no checkpoint found → starts fresh
-11. Analyzes intent → sees "Starbucks" without context → treats as general conversation
-12. Responds with general message (no transaction processing)
-13. Previous transaction state is lost
+9. Orchestrator finds active conversation → reuses same `conversationId: conv_user123_1730000000000`
+10. Main Agent invoked with same `thread_id` → checkpoint loaded
+11. Orchestrator only sets `currentUserMessage: "Starbucks"`, checkpointer restores `activeSubAgent: 'transaction'`
+12. Main Agent sees `activeSubAgent: 'transaction'` → routes to continue transaction
+13. Transaction Agent loads its checkpoint → applies user context → merchant = "Starbucks"
+14. Agent validates again → all valid
+15. Agent categorizes and stores
+16. User receives confirmation
+17. `activeSubAgent` cleared → conversation marked 'completed'
 
 #### Error Handling (Database Connection Failed)
 **Invocation 1:**
@@ -234,11 +232,11 @@ View traces at: https://smith.langchain.com/
 - **Fix**: Run `supabase start` before starting the app
 - **Check**: `curl http://127.0.0.1:54321/rest/v1/`
 
-**User Corrections Not Applied**
+**User Corrections Not Applied (Fixed in v2.3.1)**
 - **Symptom**: User corrections ignored in multi-turn flow
-- **Cause**: Checkpoint not loading properly or state not persisting
-- **Fix**: Verify `thread_id` is consistent across invocations
-- **Verify**: Check logs for checkpoint load/save operations
+- **Cause**: Orchestrator was overwriting `activeSubAgent` and `subAgentState` with null values
+- **Fix**: Orchestrator now only sets current-turn fields, allowing checkpointer to restore sub-agent state
+- **Verify**: Check logs for `[Orchestrator] Reusing existing conversation` and `Active sub-agent: transaction`
 
 ## Monitoring
 
@@ -260,7 +258,6 @@ Target latencies:
 ## Known Issues & Limitations
 
 ### Current Limitations
-- ⚠️ **Multi-turn conversations broken**: New `conversationId` generated each invocation, so checkpoints never reused
 - ⚠️ **MemorySaver only**: Checkpoints stored in memory, lost on restart (PostgresSaver pending dependency upgrade)
 - Conversation cleanup job runs every 6 hours (configurable)
 - Maximum 20 messages in conversation history (older messages truncated)
@@ -269,6 +266,8 @@ Target latencies:
 - No internal agent loops - each user message requires a new invocation
 
 ### Fixed Issues
+- ✅ **v2.3.1**: Fixed state persistence - orchestrator no longer overwrites sub-agent state from checkpoints
+- ✅ **v2.3.0**: Fixed multi-turn conversations - orchestrator now reuses conversationId across messages
 - ✅ **v2.2**: Removed unused context injection and continuation features
 - ✅ **v2.1**: Fixed infinite loop when transaction storage fails (clears `activeSubAgent` on error)
 - ✅ **v2.0**: Replaced fixed workflow with adaptive agent loop
