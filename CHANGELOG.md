@@ -5,6 +5,34 @@ All notable changes to the Receipt Tracker Agent project will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-11-05
+
+### Fixed
+- **Critical**: Fixed multi-turn conversation support in production
+  - Orchestrator now properly reuses `conversationId` across multiple messages
+  - Previously, each message generated a new `conversationId` with timestamp, breaking LangGraph checkpointing
+  - Now checks for active conversations and reuses existing `conversationId` until completed or expired
+  - Integrated `ConversationManager` into orchestrator for proper conversation lifecycle management
+  - Multi-turn conversations now work correctly in production (not just in tests)
+
+### Changed
+- `ConversationOrchestrator` now requires `ConversationManager` dependency
+- Added `getOrCreateConversation()` method to handle conversation reuse logic
+- Orchestrator now updates conversation activity and turn count on each message
+- Orchestrator marks conversations as 'completed' when agent finishes processing
+- Improved logging to show conversation reuse and turn numbers
+
+### Added
+- Comprehensive conversation lifecycle documentation in `docs/CONVERSATION-LIFECYCLE.md`
+- Test script `tests/test-orchestrator-multi-turn.ts` to verify orchestrator behavior
+- Documentation on conversation status transitions and cleanup mechanisms
+
+### Documentation
+- Reorganized test scripts into `tests/` directory
+- Moved documentation to `docs/` directory
+- Updated README with conversation persistence details
+- Added conversation lifecycle management guide
+
 ## [2.2.0] - 2025-11-05
 
 ### Removed

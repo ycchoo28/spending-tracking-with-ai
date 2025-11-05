@@ -3,15 +3,14 @@
  * Tests the multi-turn conversation flow with adaptive decision-making
  */
 
-import { config, validateConfig } from './src/core/config';
-import { DatabaseClient } from './src/core/database/database';
-import { VisionProcessor } from './src/features/receipt-processing/vision/vision-processor';
-import { TransactionCategorizer } from './src/features/receipt-processing/categorizer/categorizer';
-import { createMainAgent } from './src/features/receipt-processing/main-agent/main-agent';
-import { createTransactionAgent } from './src/features/receipt-processing/transaction-agent/transaction-agent';
-import { getCheckpointer } from './src/core/checkpointing';
+import { config, validateConfig } from '../src/core/config';
+import { DatabaseClient } from '../src/core/database/database';
+import { VisionProcessor } from '../src/features/receipt-processing/vision/vision-processor';
+import { TransactionCategorizer } from '../src/features/receipt-processing/categorizer/categorizer';
+import { createMainAgent } from '../src/features/receipt-processing/main-agent/main-agent';
+import { createTransactionAgent } from '../src/features/receipt-processing/transaction-agent/transaction-agent';
+import { getCheckpointer } from '../src/core/checkpointing';
 import { ChatOpenAI } from '@langchain/openai';
-import * as fs from 'fs';
 
 console.log('🧪 Testing v2 Agent Loop...\n');
 
@@ -101,7 +100,6 @@ async function testAgentLoop() {
       subAgentState: null,
       subAgentThreadId: null,
       responseMessage: '',
-      shouldContinue: false,
     };
 
     console.log('Input: "Hello, how are you?"');
@@ -114,7 +112,7 @@ async function testAgentLoop() {
     console.log('Result:');
     console.log(`  Intent: ${result1.currentIntent}`);
     console.log(`  Response: ${result1.responseMessage?.substring(0, 100)}...`);
-    console.log(`  Should Continue: ${result1.shouldContinue}`);
+    console.log(`  Active Sub-Agent: ${result1.activeSubAgent || 'none'}`);
     console.log(`  ✓ Test 1 ${result1.currentIntent === 'general' ? 'PASSED' : 'FAILED'}\n`);
 
     // Test 2: Transaction intent with image marker (without actual processing)
@@ -137,7 +135,6 @@ async function testAgentLoop() {
       subAgentState: null,
       subAgentThreadId: null,
       responseMessage: '',
-      shouldContinue: false,
     };
 
     console.log('Input: "[IMAGE] Here is my receipt"');
@@ -176,7 +173,6 @@ async function testAgentLoop() {
       subAgentState: null,
       subAgentThreadId: null,
       responseMessage: '',
-      shouldContinue: false,
     };
 
     console.log('Input: "help"');
@@ -189,7 +185,7 @@ async function testAgentLoop() {
     console.log('Result:');
     console.log(`  Intent: ${result3.currentIntent}`);
     console.log(`  Response includes "help": ${result3.responseMessage?.toLowerCase().includes('help') ? '✓ Yes' : '✗ No'}`);
-    console.log(`  Should Continue: ${result3.shouldContinue}`);
+    console.log(`  Active Sub-Agent: ${result3.activeSubAgent || 'none'}`);
     console.log(`  ✓ Test 3 ${result3.currentIntent === 'command' ? 'PASSED' : 'FAILED'}\n`);
 
     // Test 4: Conversation history persistence
@@ -215,7 +211,6 @@ async function testAgentLoop() {
       subAgentState: null,
       subAgentThreadId: null,
       responseMessage: '',
-      shouldContinue: false,
     };
 
     console.log('Message 1: "My name is Alice"');

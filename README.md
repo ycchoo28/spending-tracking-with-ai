@@ -41,7 +41,18 @@ receipt-tracker-agent/
 ├── .kiro/                           # Kiro IDE configuration
 │   └── specs/                       # Feature specifications
 │       └── multi-turn-agent-loop/   # v2 agent loop specs
-├── tests/                           # Test files
+├── docs/                            # Documentation
+│   ├── architecture/                # Architecture diagrams and docs
+│   ├── guides/                      # User guides
+│   ├── summaries/                   # Feature summaries
+│   └── CONVERSATION-LIFECYCLE.md    # Conversation management guide
+├── tests/                           # Test scripts and utilities
+│   ├── langsmith/                   # LangSmith trace analysis tools
+│   │   ├── analyze-trace.ts         # Detailed trace analyzer
+│   │   ├── fetch-trace.ts           # Trace fetching utility
+│   │   └── trace-summary.ts         # Trace summarization tool
+│   ├── test-*.ts                    # Test scripts
+│   └── README.md                    # Test documentation
 ├── .env.example                     # Environment variables template
 ├── package.json                     # Dependencies
 └── tsconfig.json                    # TypeScript configuration
@@ -134,13 +145,20 @@ Run tests:
 npm test
 ```
 
-Run end-to-end tests:
+Run specific test scripts:
 
 ```bash
-npm run test:e2e
+# Multi-turn clarification test
+npx tsx tests/test-multi-turn-clarification.ts
+
+# Orchestrator multi-turn test
+npx tsx tests/test-orchestrator-multi-turn.ts
+
+# Agent loop v2 test
+npx tsx tests/test-agent-loop-v2.ts
 ```
 
-See [TESTING-QUICK-START.md](./TESTING-QUICK-START.md) for E2E testing guide.
+See [docs/guides/](./docs/guides/) for testing guides.
 
 ## Deployment
 
@@ -323,16 +341,18 @@ The system uses a **supervisor agent pattern** with multi-turn conversation supp
 
 - **Main Conversation Agent**: Analyzes user intent, manages conversation flow, routes to sub-agents
 - **Transaction Sub-Agent**: Processes receipts with adaptive decision-making (no hard-coded logic)
-- **Conversation Orchestrator**: Handles message routing and context injection during processing
+- **Conversation Orchestrator**: Handles message routing and manages conversation lifecycle
+- **Conversation Manager**: Tracks active conversations, handles expiration and cleanup
 - **PostgreSQL Checkpointing**: Persists conversation state for resumption and debugging
 
 Key features:
 - **Multi-turn conversations**: Users can provide information incrementally across multiple messages
+- **Conversation persistence**: Same conversation reused until completed or expired (24 hours)
 - **Adaptive workflow**: LLM-based decision node determines next action dynamically
-- **Context injection**: Messages sent during processing are immediately incorporated
 - **Intelligent validation**: Prioritizes critical fields (merchant, amount) before optional ones
+- **Automatic cleanup**: Expired conversations and checkpoints cleaned up every 6 hours
 
-See [src/features/receipt-processing/README_V2.md](src/features/receipt-processing/README_V2.md) for detailed architecture.
+See [src/features/receipt-processing/README_V2.md](src/features/receipt-processing/README_V2.md) for detailed architecture and [docs/CONVERSATION-LIFECYCLE.md](docs/CONVERSATION-LIFECYCLE.md) for conversation management details.
 
 ## Technologies
 

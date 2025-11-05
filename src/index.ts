@@ -134,7 +134,8 @@ class ReceiptTrackerAgent {
       // v2: Initialize Conversation Orchestrator
       logger.info("🎭 Initializing conversation orchestrator...");
       this.conversationOrchestrator = new ConversationOrchestrator(
-        this.mainAgent
+        this.mainAgent,
+        this.conversationManager
       );
       logger.info("✅ Conversation orchestrator initialized");
 

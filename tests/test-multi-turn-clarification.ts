@@ -3,13 +3,13 @@
  * Tests the scenario where extraction has low confidence and requires human input
  */
 
-import { config, validateConfig } from './src/core/config';
-import { DatabaseClient } from './src/core/database/database';
-import { VisionProcessor } from './src/features/receipt-processing/vision/vision-processor';
-import { TransactionCategorizer } from './src/features/receipt-processing/categorizer/categorizer';
-import { createMainAgent } from './src/features/receipt-processing/main-agent/main-agent';
-import { createTransactionAgent } from './src/features/receipt-processing/transaction-agent/transaction-agent';
-import { getCheckpointer } from './src/core/checkpointing';
+import { config, validateConfig } from '../src/core/config';
+import { DatabaseClient } from '../src/core/database/database';
+import { VisionProcessor } from '../src/features/receipt-processing/vision/vision-processor';
+import { TransactionCategorizer } from '../src/features/receipt-processing/categorizer/categorizer';
+import { createMainAgent } from '../src/features/receipt-processing/main-agent/main-agent';
+import { createTransactionAgent } from '../src/features/receipt-processing/transaction-agent/transaction-agent';
+import { getCheckpointer } from '../src/core/checkpointing';
 import { ChatOpenAI } from '@langchain/openai';
 
 console.log('🧪 Testing Multi-Turn Clarification Flow...\n');

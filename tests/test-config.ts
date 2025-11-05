@@ -2,7 +2,7 @@
  * Test script to verify configuration is loaded correctly
  */
 
-import { config, validateConfig } from './src/core/config';
+import { config, validateConfig } from '../src/core/config';
 
 console.log('🔍 Testing Configuration...\n');
 
