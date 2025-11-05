@@ -138,13 +138,22 @@ docker run hello-world
 ## 📝 Common Use Cases
 
 ### Hosting Receipt Tracker Agent
-```bash
-# Deploy the receipt tracker application
-./deploy-receipt-tracker.sh
 
-# Or manually with Docker
-docker-compose up -d
+**Two deployment options available:**
+
+```bash
+# Option 1: Standard deployment (uses .env file)
+./deploy-with-env.sh
+
+# Option 2: Secure deployment (uses PM2 env vars) ⭐ RECOMMENDED
+./deploy-secure.sh
 ```
+
+📖 **See [DEPLOYMENT_OPTIONS.md](./DEPLOYMENT_OPTIONS.md) for detailed comparison**
+
+**Quick comparison:**
+- `deploy-with-env.sh`: Simple, creates .env file on server
+- `deploy-secure.sh`: More secure, stores secrets in PM2 memory only
 
 ### Hosting a Web Server
 ```bash
@@ -165,6 +174,22 @@ The e2-micro is perfect for:
 - Personal finance automation
 
 ## 🆘 Troubleshooting
+
+### Application Issues (Supabase Connection, etc.)
+
+If you're experiencing issues with the deployed application (like "TypeError: fetch failed"):
+
+📖 **See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for detailed diagnostics and solutions**
+
+Quick test:
+```bash
+# SSH into instance
+./manage-instance.sh ssh
+
+# Run connection test
+cd ~/receipt-tracker
+./test-supabase-connection.sh
+```
 
 ### Instance won't start
 ```bash

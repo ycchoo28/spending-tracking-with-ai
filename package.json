@@ -6,7 +6,17 @@
   "scripts": {
     "build": "npx tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "gcp:deploy": "cd gcp-free-tier && ./deploy-with-env.sh",
+    "gcp:start": "cd gcp-free-tier && ./manage-instance.sh start",
+    "gcp:stop": "cd gcp-free-tier && ./manage-instance.sh stop",
+    "gcp:restart": "cd gcp-free-tier && ./manage-instance.sh restart",
+    "gcp:status": "cd gcp-free-tier && ./manage-instance.sh status",
+    "gcp:ssh": "cd gcp-free-tier && ./manage-instance.sh ssh",
+    "gcp:info": "cd gcp-free-tier && ./manage-instance.sh info",
+    "gcp:logs": "gcloud compute ssh free-tier-vm --zone=us-central1-a --command='pm2 logs'",
+    "gcp:pm2-status": "gcloud compute ssh free-tier-vm --zone=us-central1-a --command='pm2 status'",
+    "gcp:pm2-restart": "gcloud compute ssh free-tier-vm --zone=us-central1-a --command='cd ~/receipt-tracker && pm2 restart receipt-tracker-agent'"
   },
   "keywords": [
     "telegram",

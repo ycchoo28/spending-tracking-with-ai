@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Receipt Tracker Agent Deployment Script with .env file
-# This script deploys using credentials from the .env file
+# Receipt Tracker Agent - Secure Deployment Script
+# Uses PM2 environment variables instead of .env file for better security
 
 set -e
 
@@ -19,7 +19,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}=================================================="
-echo "Receipt Tracker Agent - GCP Deployment (with .env)"
+echo "Receipt Tracker Agent - Secure GCP Deployment"
+echo "Using PM2 environment variables (no .env file)"
 echo -e "==================================================${NC}"
 echo ""
 
@@ -33,21 +34,38 @@ fi
 echo -e "${YELLOW}[1/8] Reading environment variables from .env file...${NC}"
 source "../.env"
 
+# Use PROD variables if available, otherwise fall back to regular ones
+DEPLOY_TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN_PROD:-${TELEGRAM_BOT_TOKEN}}"
+DEPLOY_SUPABASE_URL="${SUPABASE_URL_PROD:-${SUPABASE_URL}}"
+DEPLOY_SUPABASE_KEY="${SUPABASE_KEY_PROD:-${SUPABASE_KEY}}"
+
 # Validate required variables
-if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$OPENAI_API_KEY" ] || [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+if [ -z "$DEPLOY_TELEGRAM_TOKEN" ] || [ -z "$MODELSCOPE_API_KEY" ] || [ -z "$DEPLOY_SUPABASE_URL" ] || [ -z "$DEPLOY_SUPABASE_KEY" ]; then
     echo -e "${RED}❌ Error: Missing required environment variables in .env file${NC}"
-    echo "Required: TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY"
+    echo "Required: TELEGRAM_BOT_TOKEN (or TELEGRAM_BOT_TOKEN_PROD), MODELSCOPE_API_KEY, SUPABASE_URL (or SUPABASE_URL_PROD), SUPABASE_KEY (or SUPABASE_KEY_PROD)"
     exit 1
 fi
 
 echo -e "${GREEN}✅ Environment variables loaded${NC}"
-echo "  Telegram Bot: ${TELEGRAM_BOT_TOKEN:0:10}..."
-echo "  OpenAI API: ${OPENAI_API_KEY:0:10}..."
-echo "  Supabase URL: $SUPABASE_URL"
+echo "  Telegram Bot: ${DEPLOY_TELEGRAM_TOKEN:0:10}..."
+echo "  ModelScope API: ${MODELSCOPE_API_KEY:0:10}..."
+echo "  Supabase URL: $DEPLOY_SUPABASE_URL"
 
 # Check if gcloud is available
 if ! command -v gcloud &> /dev/null; then
     echo -e "${RED}❌ Error: gcloud CLI is not installed${NC}"
+    exit 1
+fi
+
+# Check if git is available and we're in a git repo
+if ! command -v git &> /dev/null; then
+    echo -e "${RED}❌ Error: git is not installed${NC}"
+    exit 1
+fi
+
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    echo -e "${RED}❌ Error: Not in a git repository${NC}"
+    echo "Please initialize git or use the repository root directory"
     exit 1
 fi
 
@@ -65,7 +83,7 @@ if [ "$STATUS" != "RUNNING" ]; then
     echo -e "${YELLOW}Starting instance...${NC}"
     gcloud compute instances start "$INSTANCE_NAME" --zone="$ZONE"
     echo -e "${GREEN}✅ Instance started${NC}"
-    sleep 10  # Wait for instance to fully start
+    sleep 10
 fi
 
 # Get external IP
@@ -81,40 +99,30 @@ gcloud compute firewall-rules create allow-receipt-tracker \
     --description="Allow access to Receipt Tracker Agent" \
     2>/dev/null || echo "Firewall rule already exists"
 
-# Add tag to instance
 gcloud compute instances add-tags "$INSTANCE_NAME" \
     --zone="$ZONE" \
     --tags=receipt-tracker 2>/dev/null || true
 
 echo -e "${GREEN}✅ Firewall configured for port $APP_PORT${NC}"
 
-# Copy project files to instance
-echo -e "${YELLOW}[4/8] Copying project files...${NC}"
+# Pull latest code from git
+echo -e "${YELLOW}[4/8] Pulling latest code from git...${NC}"
 
-# Create a temporary directory with only necessary files
-TEMP_DIR=$(mktemp -d)
-echo "Using temporary directory: $TEMP_DIR"
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-# Copy essential files
-cp -r ../src "$TEMP_DIR/"
-cp ../package*.json "$TEMP_DIR/"
-cp ../tsconfig.json "$TEMP_DIR/"
-cp ../Dockerfile "$TEMP_DIR/"
-cp ../docker-compose.yml "$TEMP_DIR/"
+gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
+    cd ~/receipt-tracker
+    git stash
+    git fetch origin
+    git pull origin $CURRENT_BRANCH
+    git stash pop 2>/dev/null || true
+    echo 'Code updated to latest version'
+"
 
-# Create deployment directory structure
-mkdir -p "$TEMP_DIR/scripts"
-cp -r ../scripts/* "$TEMP_DIR/scripts/" 2>/dev/null || true
+echo -e "${GREEN}✅ Code pulled from git (branch: $CURRENT_BRANCH, commit: $COMMIT_HASH)${NC}"
 
-# Copy to instance
-gcloud compute scp --recurse "$TEMP_DIR" "$INSTANCE_NAME":~/receipt-tracker --zone="$ZONE"
-
-# Clean up temp directory
-rm -rf "$TEMP_DIR"
-
-echo -e "${GREEN}✅ Project files copied${NC}"
-
-# Install dependencies and setup on instance
+# Install dependencies
 echo -e "${YELLOW}[5/8] Installing dependencies on instance...${NC}"
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
     cd ~/receipt-tracker
@@ -144,49 +152,8 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
 
 echo -e "${GREEN}✅ Dependencies installed${NC}"
 
-# Setup environment file on instance
-echo -e "${YELLOW}[6/8] Setting up environment configuration...${NC}"
-
-# Create .env file on instance with the loaded variables
-gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
-    cd ~/receipt-tracker
-    cat > .env << EOF
-# Telegram Bot Configuration
-TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-
-# OpenAI Configuration
-OPENAI_API_KEY=$OPENAI_API_KEY
-OPENAI_API_BASE=$OPENAI_API_BASE
-OPENAI_VISION_MODEL=$OPENAI_VISION_MODEL
-OPENAI_TEXT_MODEL=$OPENAI_TEXT_MODEL
-
-# Supabase Configuration
-SUPABASE_URL=$SUPABASE_URL
-SUPABASE_KEY=$SUPABASE_KEY
-
-# Application Settings
-CONFIDENCE_THRESHOLD=${CONFIDENCE_THRESHOLD:-0.8}
-MAX_RETRIES=${MAX_RETRIES:-3}
-RETRY_DELAY=${RETRY_DELAY:-2000}
-LOG_LEVEL=info
-NODE_ENV=production
-
-# Memory Monitoring (30000ms = 30 seconds, set to 0 to disable)
-MEMORY_MONITOR_INTERVAL_MS=${MEMORY_MONITOR_INTERVAL_MS:-30000}
-
-# LangSmith Tracing (Optional)
-LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
-LANGCHAIN_API_KEY=$LANGCHAIN_API_KEY
-LANGCHAIN_PROJECT=$LANGCHAIN_PROJECT
-LANGCHAIN_ENDPOINT=$LANGCHAIN_ENDPOINT
-EOF
-    echo 'Environment file created'
-"
-
-echo -e "${GREEN}✅ Environment configured${NC}"
-
 # Build the application
-echo -e "${YELLOW}[7/8] Building application...${NC}"
+echo -e "${YELLOW}[6/8] Building application...${NC}"
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
     cd ~/receipt-tracker
     
@@ -204,11 +171,18 @@ gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
 
 echo -e "${GREEN}✅ Application built${NC}"
 
-# Setup PM2 ecosystem file and start application
-echo -e "${YELLOW}[8/8] Starting application...${NC}"
+# Setup PM2 ecosystem file with environment variables
+echo -e "${YELLOW}[7/8] Configuring PM2 with environment variables...${NC}"
+
+# Escape special characters for bash heredoc
+ESCAPED_TELEGRAM_TOKEN=$(printf '%s' "$DEPLOY_TELEGRAM_TOKEN" | sed "s/'/'\\\\''/g")
+ESCAPED_MODELSCOPE_KEY=$(printf '%s' "$MODELSCOPE_API_KEY" | sed "s/'/'\\\\''/g")
+ESCAPED_SUPABASE_URL=$(printf '%s' "$DEPLOY_SUPABASE_URL" | sed "s/'/'\\\\''/g")
+ESCAPED_SUPABASE_KEY=$(printf '%s' "$DEPLOY_SUPABASE_KEY" | sed "s/'/'\\\\''/g")
+
 gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
     cd ~/receipt-tracker
-    cat > ecosystem.config.js << 'EOF'
+    cat > ecosystem.config.js << 'EOFCONFIG'
 module.exports = {
   apps: [{
     name: 'receipt-tracker-agent',
@@ -216,7 +190,40 @@ module.exports = {
     instances: 1,
     exec_mode: 'fork',
     env: {
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      
+      // Telegram Configuration
+      TELEGRAM_BOT_TOKEN: '$ESCAPED_TELEGRAM_TOKEN',
+      TELEGRAM_BOT_TOKEN_PROD: '$ESCAPED_TELEGRAM_TOKEN',
+      
+      // ModelScope API Configuration
+      MODELSCOPE_API_KEY: '$ESCAPED_MODELSCOPE_KEY',
+      MODELSCOPE_API_BASE: '${MODELSCOPE_API_BASE:-https://api-inference.modelscope.cn/v1}',
+      MODELSCOPE_VISION_MODEL: '${MODELSCOPE_VISION_MODEL:-Qwen/Qwen3-VL-235B-A22B-Instruct}',
+      MODELSCOPE_TEXT_MODEL_PROFILE: '${MODELSCOPE_TEXT_MODEL_PROFILE:-glm4}',
+      MODELSCOPE_TEXT_MODEL_GLM4: '${MODELSCOPE_TEXT_MODEL_GLM4:-ZhipuAI/GLM-4.6}',
+      MODELSCOPE_TEXT_MODEL_QWEN_CODER: '${MODELSCOPE_TEXT_MODEL_QWEN_CODER:-Qwen/Qwen3-Coder-480B-A35B-Instruct}',
+      
+      // Supabase Configuration
+      SUPABASE_URL: '$ESCAPED_SUPABASE_URL',
+      SUPABASE_KEY: '$ESCAPED_SUPABASE_KEY',
+      SUPABASE_URL_PROD: '$ESCAPED_SUPABASE_URL',
+      SUPABASE_KEY_PROD: '$ESCAPED_SUPABASE_KEY',
+      
+      // Application Settings
+      CONFIDENCE_THRESHOLD: '${CONFIDENCE_THRESHOLD:-0.8}',
+      MAX_RETRIES: '${MAX_RETRIES:-3}',
+      RETRY_DELAY: '${RETRY_DELAY:-2000}',
+      LOG_LEVEL: 'info',
+      
+      // Memory Monitoring
+      MEMORY_MONITOR_INTERVAL_MS: '${MEMORY_MONITOR_INTERVAL_MS:-30000}',
+      
+      // LangSmith (Optional)
+      LANGCHAIN_TRACING_V2: '${LANGCHAIN_TRACING_V2:-false}',
+      LANGCHAIN_API_KEY: '${LANGCHAIN_API_KEY:-}',
+      LANGCHAIN_PROJECT: '${LANGCHAIN_PROJECT:-}',
+      LANGCHAIN_ENDPOINT: '${LANGCHAIN_ENDPOINT:-}'
     },
     log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
     error_file: '~/.pm2/logs/receipt-tracker-error.log',
@@ -229,7 +236,23 @@ module.exports = {
     max_memory_restart: '500M'
   }]
 };
-EOF
+EOFCONFIG
+    
+    # Remove .env file if it exists (we're using PM2 env vars now)
+    if [ -f .env ]; then
+        echo 'Removing .env file (using PM2 environment variables instead)'
+        rm .env
+    fi
+    
+    echo 'PM2 ecosystem configured with environment variables'
+"
+
+echo -e "${GREEN}✅ PM2 configured securely${NC}"
+
+# Start application
+echo -e "${YELLOW}[8/8] Starting application...${NC}"
+gcloud compute ssh "$INSTANCE_NAME" --zone="$ZONE" --command="
+    cd ~/receipt-tracker
     
     # Stop any existing PM2 processes
     pm2 delete receipt-tracker-agent 2>/dev/null || true
@@ -248,32 +271,26 @@ EOF
 
 echo -e "${GREEN}✅ Application deployed and started${NC}"
 
-# Update instance details file
-echo -e "${YELLOW}Updating instance details...${NC}"
-./update-instance-details.sh
-
 echo ""
 echo -e "${BLUE}=================================================="
-echo "Deployment Complete!"
+echo "Secure Deployment Complete!"
 echo -e "==================================================${NC}"
 echo ""
 echo -e "🚀 Your Receipt Tracker Agent is now running on GCP!"
+echo -e "🔒 Secrets are stored in PM2 environment variables (not in .env file)"
 echo ""
 echo -e "📱 ${GREEN}Bot URL:${NC} Start chatting with your Telegram bot"
 echo -e "🌐 ${GREEN}Instance IP:${NC} $EXTERNAL_IP"
-echo -e "🔗 ${GREEN}Health Check:${NC} http://$EXTERNAL_IP:$APP_PORT (if health endpoint is enabled)"
 echo ""
 echo -e "${YELLOW}Management Commands:${NC}"
 echo "  View logs:     gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command='pm2 logs'"
 echo "  Check status:  gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command='pm2 status'"
 echo "  Restart app:   gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command='pm2 restart receipt-tracker-agent'"
-echo "  Stop app:      gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command='pm2 stop receipt-tracker-agent'"
+echo "  View env vars: gcloud compute ssh $INSTANCE_NAME --zone=$ZONE --command='pm2 env 0'"
 echo ""
 echo -e "${YELLOW}SSH into instance:${NC}"
 echo "  ./manage-instance.sh ssh"
 echo ""
-echo -e "${YELLOW}Setup logging (optional):${NC}"
-echo "  ./setup-logging.sh"
-echo ""
-echo -e "💡 ${BLUE}Remember:${NC} Monitor your GCP usage to stay within free tier limits!"
+echo -e "💡 ${BLUE}Security Note:${NC} Environment variables are stored in PM2's process memory"
+echo "   and in the ecosystem.config.js file. The .env file has been removed."
 echo ""
