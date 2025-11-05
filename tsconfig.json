@@ -20,5 +20,12 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "src/features/receipt-processing/_archive_v1/**/*",
+    "src/features/telegram-bot/**/*",
+    "src/index-console.ts"
+  ]
 }

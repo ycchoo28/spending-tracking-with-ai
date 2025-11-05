@@ -3,4 +3,4 @@
  */
 
 export * from './receipt-processing';
-export * from './telegram-bot';
+// v1 telegram-bot archived - not exported in v2

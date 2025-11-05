@@ -71,4 +71,7 @@ export interface MessagingAdapterCallbacks {
   onTextReceived: (context: UserContext, text: string) => Promise<void>;
   onOptionSelected: (context: UserContext, optionId: string, optionValue: string) => Promise<void>;
   onCommand?: (context: UserContext, command: string, args: string[]) => Promise<void>;
+  
+  // v2: Multi-turn conversation support
+  onMessage?: (context: UserContext, message: string, imageData?: Buffer) => Promise<string>;
 }

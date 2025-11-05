@@ -13,7 +13,6 @@ import {
   ErrorMessage
 } from './types';
 import { logger } from '../utils/logger';
-import { WorkflowStateManager, PendingWorkflow } from '../../features/telegram-bot/workflow-state-manager';
 
 export interface TelegramAdapterConfig {
   botToken: string;
@@ -23,22 +22,42 @@ export interface TelegramAdapterConfig {
 export class TelegramAdapter implements MessagingAdapter {
   private bot: Telegraf;
   private callbacks: MessagingAdapterCallbacks;
-  private workflowStateManager: WorkflowStateManager;
   private botToken: string;
 
   constructor(config: TelegramAdapterConfig) {
     this.botToken = config.botToken;
     this.bot = new Telegraf(config.botToken);
     this.callbacks = config.callbacks;
-    this.workflowStateManager = new WorkflowStateManager();
     
     this.registerHandlers();
   }
 
   async start(): Promise<void> {
-    logger.info('🚀 Starting Telegram adapter...');
-    await this.bot.launch();
-    logger.info('✅ Telegram adapter started');
+    try {
+      const env = process.env.NODE_ENV || 'development';
+      logger.info('🚀 Starting Telegram adapter...');
+      logger.info(`Environment: ${env}`);
+      logger.info(`Bot token: ${this.botToken.substring(0, 10)}...`);
+      
+      // Launch with dropPendingUpdates to clear any pending updates
+      await this.bot.launch({
+        dropPendingUpdates: true
+      });
+      
+      logger.info('✅ Telegram adapter started');
+      logger.info('📱 Bot is ready to receive messages');
+    } catch (error) {
+      logger.error('❌ Failed to launch Telegram bot');
+      if (error instanceof Error) {
+        logger.error(`Error name: ${error.name}`);
+        logger.error(`Error message: ${error.message}`);
+        logger.error(`Stack trace: ${error.stack}`);
+      } else {
+        logger.error(`Unknown error type: ${typeof error}`);
+        logger.error(`Error value: ${JSON.stringify(error)}`);
+      }
+      throw error;
+    }
   }
 
   async stop(signal?: string): Promise<void> {
@@ -64,13 +83,20 @@ export class TelegramAdapter implements MessagingAdapter {
         const response = await fetch(fileUrl);
         const imageBuffer = Buffer.from(await response.arrayBuffer());
         
-        const image: ImageInput = {
-          data: imageBuffer,
-          url: fileUrl,
-          mimeType: 'image/jpeg'
-        };
-        
-        await this.callbacks.onImageReceived(context, image);
+        // v2: Use onMessage callback if available (multi-turn support)
+        if (this.callbacks.onMessage) {
+          const caption = 'caption' in ctx.message ? ctx.message.caption || '' : '';
+          const responseMessage = await this.callbacks.onMessage(context, caption, imageBuffer);
+          await ctx.reply(responseMessage);
+        } else {
+          // Fallback to v1 callback
+          const image: ImageInput = {
+            data: imageBuffer,
+            url: fileUrl,
+            mimeType: 'image/jpeg'
+          };
+          await this.callbacks.onImageReceived(context, image);
+        }
       } catch (error) {
         logger.error('Error handling photo', error as Error);
         await ctx.reply('❌ Failed to process image. Please try again.');
@@ -93,7 +119,20 @@ export class TelegramAdapter implements MessagingAdapter {
       }
       
       const context = this.createUserContext(ctx);
-      await this.callbacks.onTextReceived(context, text);
+      
+      // v2: Use onMessage callback if available (multi-turn support)
+      if (this.callbacks.onMessage) {
+        try {
+          const responseMessage = await this.callbacks.onMessage(context, text);
+          await ctx.reply(responseMessage);
+        } catch (error) {
+          logger.error('Error handling text message', error as Error);
+          await ctx.reply('❌ An error occurred. Please try again.');
+        }
+      } else {
+        // Fallback to v1 callback
+        await this.callbacks.onTextReceived(context, text);
+      }
     });
 
     // Callback query handler (for buttons)
@@ -149,19 +188,7 @@ export class TelegramAdapter implements MessagingAdapter {
     });
 
     this.bot.command('cancel', async (ctx) => {
-      const userId = ctx.from?.id.toString();
-      
-      if (!userId) {
-        await ctx.reply('Unable to identify user.');
-        return;
-      }
-
-      if (this.workflowStateManager.hasPending(userId)) {
-        this.workflowStateManager.clearPending(userId);
-        await ctx.reply('✅ Cancelled. You can send a new receipt or photo.');
-      } else {
-        await ctx.reply('No pending operation to cancel.');
-      }
+      await ctx.reply('✅ Cancelled. You can send a new receipt or photo.');
     });
 
     // Error handler
@@ -277,16 +304,6 @@ export class TelegramAdapter implements MessagingAdapter {
   async requestTextInput(context: UserContext, prompt: string): Promise<void> {
     const chatId = this.getChatId(context);
     await this.bot.telegram.sendMessage(chatId, prompt);
-    
-    // Mark that we're waiting for input
-    const pendingWorkflow: PendingWorkflow = {
-      userId: context.userId,
-      chatId: this.getChatId(context),
-      type: 'retry_extraction',
-      state: {} as any, // Will be set by orchestrator
-      timestamp: Date.now()
-    };
-    this.workflowStateManager.setPending(context.userId, pendingWorkflow);
   }
 
   private createUserContext(ctx: Context): UserContext {

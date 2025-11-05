@@ -113,11 +113,19 @@ export class ConsoleAdapter implements MessagingAdapter {
             const imagePath = args.join(' ');
             try {
               const imageData = fs.readFileSync(imagePath);
-              const image: ImageInput = {
-                data: imageData,
-                url: `file://${imagePath}`
-              };
-              await this.callbacks.onImageReceived(this.context, image);
+              
+              // v2: Use onMessage callback if available (multi-turn support)
+              if (this.callbacks.onMessage) {
+                const response = await this.callbacks.onMessage(this.context, '', imageData);
+                console.log(`\n📨 ${response}\n`);
+              } else {
+                // Fallback to v1 callback
+                const image: ImageInput = {
+                  data: imageData,
+                  url: `file://${imagePath}`
+                };
+                await this.callbacks.onImageReceived(this.context, image);
+              }
             } catch (error) {
               console.log(`❌ Failed to read image: ${error}`);
             }
@@ -127,7 +135,19 @@ export class ConsoleAdapter implements MessagingAdapter {
 
         case 'text':
           if (args.length > 0) {
-            await this.callbacks.onTextReceived(this.context, args.join(' '));
+            const text = args.join(' ');
+            // v2: Use onMessage callback if available (multi-turn support)
+            if (this.callbacks.onMessage) {
+              try {
+                const response = await this.callbacks.onMessage(this.context, text);
+                console.log(`\n📨 ${response}\n`);
+              } catch (error) {
+                console.log(`❌ Error: ${error}`);
+              }
+            } else {
+              // Fallback to v1 callback
+              await this.callbacks.onTextReceived(this.context, text);
+            }
           }
           this.promptUser();
           break;
